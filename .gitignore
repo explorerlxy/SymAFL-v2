@@ -1,0 +1,6 @@
+third_party/
+tests/toy
+tests/toy-afl
+tests/toy-trace
+tests/shim.o
+__pycache__/

@@ -1,6 +1,6 @@
 [submodule "AFLplusplus"]
 	path = AFLplusplus
-	url = https://github.com/AFLplusplus/AFLplusplus
+	url = git@github.com:explorerlxy/SymAFL-AFLplusplus-v2.git
 [submodule "symsan"]
 	path = symsan
 	url = https://github.com/explorerlxy/SymAFL-Symsan

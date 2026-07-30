@@ -1,5 +1,20 @@
+# Local dependency builds
 third_party/
-docs/
-scripts/
-tests/
+
+# Python cache
 __pycache__/
+*.pyc
+
+# Agent scratch / local workspaces
+task/
+
+# Built smoke binaries (rebuild from sources; see CLAUDE.md / docs/CONFIGURATION.md)
+tests/toy
+tests/toy-afl
+tests/toy-trace
+tests/shim.o
+tests/__pycache__/
+
+# Large prebuilt evaluation binaries (sources under tests/targets/ remain tracked)
+tests/targets/xz-afl
+tests/targets/xz-v2

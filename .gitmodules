@@ -1,6 +1,8 @@
 [submodule "AFLplusplus"]
 	path = AFLplusplus
 	url = git@github.com:explorerlxy/SymAFL-AFLplusplus-v2.git
+	branch = main
 [submodule "symsan"]
 	path = symsan
 	url = git@github.com:explorerlxy/SymAFL-Symsan.git
+	branch = v2-dev

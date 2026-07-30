@@ -14,6 +14,8 @@ Authoritative current-behavior documents (read before changing architecture):
 - [docs/STATUS.md](docs/STATUS.md)
 - [docs/VERIFICATION.md](docs/VERIFICATION.md)
 
+Status vs handoff: `STATUS.md` = evidence/truth; `NEXT_SESSION.md` = next action only. For ChatGPT Project sync, prefer [docs/SYNC_DOCS.md](docs/SYNC_DOCS.md) + [docs/SYNC_CODE.md](docs/SYNC_CODE.md) over bulk doc uploads.
+
 Historical design notes live under [docs/archive/](docs/archive/) and are **not** normative. The repository operating contract is [AGENTS.md](AGENTS.md). Documentation map: [docs/README.md](docs/README.md).
 
 ## Repo layout
@@ -84,4 +86,4 @@ Full policy lives in [AGENTS.md](AGENTS.md) (“Commit and pull-request guidelin
 - **Do not push:** thrashing WIP, secrets/local absolute paths, large fuzz outputs, or any superproject pointer whose submodule commit is not yet on the submodule remote.
 - **Submodule order:** commit in `symsan/` or `AFLplusplus/` → push submodule remote → commit superproject pointer → push superproject.
 - **Split themes:** metadata, docs/agent files, `scripts/`, `tests/`, and submodule bumps are separate commits. Keep scratch (`task/`, corpora, `/tmp` queues, binaries, logs) out of Git unless it is a small intentional fixture.
-- **After a milestone:** update [docs/NEXT_SESSION.md](docs/NEXT_SESSION.md) with intent, files, verification commands/results, risks, and next action.
+- **After a milestone:** update [docs/STATUS.md](docs/STATUS.md) if evidence changed; update [docs/NEXT_SESSION.md](docs/NEXT_SESSION.md) only if the next objective/owner/acceptance changed; refresh [docs/SYNC_DOCS.md](docs/SYNC_DOCS.md) / [docs/SYNC_CODE.md](docs/SYNC_CODE.md) if browser digests would drift.

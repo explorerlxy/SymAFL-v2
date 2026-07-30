@@ -24,6 +24,7 @@ AFL++ 切换到独立的 concrete target，并以保留的 queue 在新的 cover
 - [配置参考](docs/CONFIGURATION.md)
 - [验证矩阵](docs/VERIFICATION.md)
 - [当前状态与已知缺口](docs/STATUS.md)
+- [浏览器同步：文档摘要](docs/SYNC_DOCS.md) / [关键代码摘要](docs/SYNC_CODE.md)
 
 ## 仓库结构
 

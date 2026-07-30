@@ -172,9 +172,14 @@ property into an observed result without evidence.
 - Add or update focused regression coverage for behavioral changes.
 - Update user-facing documentation when commands, configuration, lifecycle,
   semantics, or expected observations change.
-- Update `docs/STATUS.md` when implementation or verification status changes.
-- Update `docs/NEXT_SESSION.md` when the current state, unresolved risk, next
-  decision, or next owner changes.
+- Update `docs/STATUS.md` when implementation or verification evidence changes.
+  STATUS owns the feature matrix, PASS/FAIL records, and durable open issues.
+- Update `docs/NEXT_SESSION.md` only when the next objective, owner, or
+  acceptance commands change. Keep it action-only and short; never restate the
+  feature matrix or long verification logs there.
+- Facts go to STATUS; actions go to NEXT_SESSION. Do not duplicate paragraphs.
+- When browser-facing summaries would drift, refresh `docs/SYNC_DOCS.md` and/or
+  `docs/SYNC_CODE.md` (the default ChatGPT Project upload pair).
 - Record durable architecture decisions under `docs/decisions/`.
 - Keep historical discussion under `docs/archive/`; do not use archived text as
   the implementation contract.
@@ -237,11 +242,14 @@ mandatory.
 3. Give Codex a self-contained implementation handoff containing the approved
    objective, invariants, acceptance checks, decision IDs, and named local files
    to inspect.
-4. End each Codex milestone with a repository handoff. Update affected docs,
-   `docs/STATUS.md`, and `docs/NEXT_SESSION.md` as applicable.
-5. Refresh Project files deliberately. Remove obsolete uploaded sources before
-   uploading replacements; do not assume same-name uploads form a reliable
-   version history.
+4. End each Codex milestone with a repository handoff. Always update
+   `docs/STATUS.md` if evidence changed. Update `docs/NEXT_SESSION.md` only if
+   the next objective/owner/acceptance changed. Refresh `docs/SYNC_DOCS.md` and
+   `docs/SYNC_CODE.md` when the browser digests would otherwise drift.
+5. Refresh Project files deliberately. Default upload is the two digests in
+   `docs/SYNC_DOCS.md` and `docs/SYNC_CODE.md` (optionally `NEXT_SESSION.md`).
+   Remove obsolete uploaded sources before uploading replacements; do not
+   assume same-name uploads form a reliable version history.
 6. Serialize authority. Do not run conflicting browser-directed and local edits
    concurrently.
 
@@ -256,9 +264,10 @@ Upload text-first, reviewable source files. Do not upload:
 - credentials, API keys, access tokens, SSH material, or `.env*`; or
 - data outside the declared research boundary.
 
-Prefer the curated bundle documented in the root README or a smaller,
-task-specific snapshot. Prefer concise milestone summaries over full terminal
-logs; retain detailed logs locally under `/tmp`.
+**Default Project upload:** `docs/SYNC_DOCS.md` + `docs/SYNC_CODE.md`.
+Add full source files only for paths under active edit when digests are not
+enough. Prefer concise milestone summaries over full terminal logs; retain
+detailed logs locally under `/tmp`.
 
 ### Required handoff format
 
@@ -381,4 +390,6 @@ small coherent change -> local commit
   -> milestone / backup / review needed
   -> optional history cleanup on a private branch
   -> push feature branch (or stable main)
-  -> update docs/STATUS.md and docs/NEXT_SESSION.md when state changes
+  -> update docs/STATUS.md if evidence changed
+  -> update docs/NEXT_SESSION.md only if next action/owner/acceptance changed
+  -> refresh docs/SYNC_DOCS.md / docs/SYNC_CODE.md if browser digests would drift

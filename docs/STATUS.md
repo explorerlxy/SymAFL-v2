@@ -1,29 +1,34 @@
 # Current Status and Evidence
 
-This file is the only place that summarizes implementation state. Update it at
-every milestone with a revision and test result.
+This file is the **only durable truth layer** for implementation and verification
+state. It answers: *what is implemented, with what evidence, and which durable
+gaps remain?*
 
-## Snapshot for the documentation-system maintenance pass
+It does **not** own the next session action. That belongs in
+[`NEXT_SESSION.md`](NEXT_SESSION.md).
+
+## Evidence labels
+
+- **Verified** — code present and covered by a recorded PASS.
+- **Code-reviewed** — code present; no directed PASS yet, or only partial smoke.
+- **Documented** — claimed by docs; implementation/test evidence incomplete.
+- **Planned** — desired, not current behavior.
+- **Historical** — archived reasoning only.
+
+## Snapshot
 
 ```text
 Snapshot: superproject main (docs-system landing, published),
           AFLplusplus main ef727c6 (published),
           symsan v2-dev ee90b4a (published)
-Reviewed: README.md, AGENTS.md, CLAUDE.md, docs/* (new structure),
-          symsan/driver/aflpp/{symsan.cpp,pcbt.hpp,pcbt.cpp,pred.hpp,pred.cpp,README.md},
-          symsan/backend/solver_common.cpp, symsan/runtime/dfsan/dfsan.h,
-          AFLplusplus/include/{forkserver.h,afl-fuzz.h},
-          AFLplusplus/src/{afl-forkserver.c,afl-fuzz.c,afl-fuzz-state.c},
-          scripts/run-fuzz.sh, tests/* harnesses
-Execution (2026-07-30 local):
+Last matrix run: 2026-07-30
   python3 tests/trace_check.py direct          -> PASS
   python3 tests/trace_check.py afl             -> PASS
-  python3 tests/pcbt_pipe_check.py             -> PASS (65536 events, >2 MiB drained)
-  python3 tests/pcbt_toy_modes_check.py        -> PASS (pipe-full -> shm overflow -> pipe-suffix)
+  python3 tests/pcbt_pipe_check.py             -> PASS
+  python3 tests/pcbt_toy_modes_check.py        -> PASS
   FUZZ_SECONDS=30 scripts/run-fuzz.sh pcbt     -> PASS
-    bootstrap full events=11; tree saturated after 1 veto;
-    "PCBT saturated; restarting forkserver with concrete target .../tests/toy-afl";
-    deinit: traces=1 nodes=11 depth=11 admitted=1 vetoed=1 saturated=1
+    bootstrap full events=11; saturated after 1 veto;
+    concrete restart observed; nodes=11 admitted=1 vetoed=1
 Logs: /tmp/symafl-verify-142306, /tmp/symafl2-pcbt-smoke
 ```
 
@@ -31,65 +36,47 @@ Logs: /tmp/symafl-verify-142306, /tmp/symafl2-pcbt-smoke
 
 | Feature | Status | Evidence | Caveat |
 |---|---|---|---|
-| Required concolic/concrete target validation | Verified | `symsan.cpp: afl_custom_init`; `run-fuzz.sh pcbt` starts | — |
-| PCBT screening in `post_process` | Verified | admitted/vetoed counters in pcbt smoke | short-input direction rule still needs directed unit test |
-| Full bootstrap insertion | Verified | `pcbt-trace bootstrap mode=full events=11 created=11` | — |
-| SHM frontier suffix | Verified | `pcbt_toy_modes_check.py` exercises shm-suffix path | — |
-| Pipe-suffix overflow replay | Verified | same harness: forced overflow -> pipe-suffix | — |
-| AFL++ parent pipe drain | Verified | `pcbt_pipe_check.py` drained 65536 events | — |
-| Concrete phase-switch request + restart | Verified | mutator sets switch; `afl-fuzz.c` restarts concrete target in smoke | longer benchmarks still open |
-| Terminal-edge semantics | Code-reviewed | `terminal[2]`, empty suffix handling | directed unit test still desirable |
-| Local ≤64-bit predicate interpreter | Code-reviewed | `pred.cpp` rejects `size > 64`; sdiv edge hardened | shared-arena / opacity issues below |
-| Memerr/UCSan path binding | Planned | decoder skips non-condition frames; counter not incremented | do not claim as-built |
-| Timeout metric | Declared only | field/introspection string | no increment in mutator |
-| Jigsaw in PCBT hot path | Not used | local interpreter is called | retained dependency only |
+| Required concolic/concrete targets | Verified | `symsan.cpp:afl_custom_init`; pcbt smoke | — |
+| PCBT screening in `post_process` | Verified | admitted/vetoed in pcbt smoke | short-input rule needs unit test |
+| Full bootstrap insertion | Verified | bootstrap `mode=full events=11` | — |
+| SHM frontier suffix | Verified | `pcbt_toy_modes_check.py` | — |
+| Pipe-suffix overflow replay | Verified | same harness: overflow → pipe-suffix | — |
+| AFL++ parent pipe drain | Verified | `pcbt_pipe_check.py` (65536 events) | — |
+| Phase-switch request + concrete restart | Verified | mutator flag + `afl-fuzz.c` smoke | longer benchmarks open |
+| Terminal-edge semantics | Code-reviewed | empty suffix → terminal | directed unit test desirable |
+| ≤64-bit predicate interpreter | Code-reviewed | `pred.cpp`; size>64 opaque | shared-arena / opacity gaps |
+| Memerr/UCSan path binding | Planned | decoder skips non-condition frames | do not claim as-built |
+| Timeout metric | Declared only | introspection field | never incremented |
+| Jigsaw in PCBT hot path | Not used | local interpreter only | retained dependency |
 
-## Static-review findings requiring tests or code changes
+## Durable open issues
 
-### High priority
+### High
 
-1. **Shared-converter opacity propagation.** `RunConverter::overflow_` is a
-   converter-wide flag. An unsupported expression makes the current and all
-   later predicates converted by that instance opaque. Decide whether opacity
-   should be per predicate or per trace, then test it.
-2. **Arena-prefix evaluation.** `eval_predicate` executes all arena indices
-   `0..root`. A shared arena can contain earlier nodes unrelated to the current
-   root; an unrelated out-of-range read can abort evaluation. Add a disjoint
-   predicate regression and change evaluation order if reproduced.
-3. **Unchecked suffix attachment.** `InsertSuffix` trusts the caller and can
-   replace an existing child pointer. Enforce/check the frontier precondition at
-   the caller or add a defensive failure path.
+1. **Shared-converter opacity.** `RunConverter::overflow_` is run-global; one
+   unsupported expression can make later predicates opaque.
+2. **Arena-prefix evaluation.** `eval_predicate` walks indices `0..root`, not
+   only the root-reachable subgraph; earlier unrelated reads can affect later
+   predicates in a shared arena.
+3. **Unchecked `InsertSuffix`.** Caller must guarantee an unexplored frontier;
+   the API can overwrite an existing child if misused.
 
-### Medium priority
+### Medium
 
-4. **Metric semantics.** `saturated` means screening disabled, not necessarily
-   tree saturation; `SYMAFL_NO_SCREEN` also sets it. `timeouts` and `memerr`
-   remain zero in the reviewed code.
-5. **Short-input rule.** Predicate evaluation failure chooses direction zero
-   instead of an opaque admission. Confirm this matches the intended contract
-   and does not create false vetoes.
+4. **Metric semantics.** `saturated` means screening disabled (also under
+   `SYMAFL_NO_SCREEN`). `timeouts` / `memerr` stay zero.
+5. **Short-input rule.** Failed reads choose direction `0`, not opaque admit.
 
-## Documentation structure status
+## Documentation system
 
 | Item | Status |
 |---|---|
-| Split architecture / protocol / PCBT / config / verification | Present under `docs/` |
-| ADRs 0001–0003 | Present under `docs/decisions/` |
-| Historical DESIGN / frontier / review docs | Present under `docs/archive/` |
-| Root README + AGENTS operating contract | Present |
-| CLAUDE.md points at canonical docs (not archived DESIGN_V2) | Updated |
-| `.gitignore` versions the documentation system and test/scripts sources | Updated |
-| `STATUS` / `NEXT_SESSION` reflect Git + PASS evidence | Updated this pass |
+| Split architecture / protocol / PCBT / config / verification | Present |
+| ADRs 0001–0003 | Present |
+| Archive of superseded design notes | Present |
+| Browser sync digests (`SYNC_DOCS`, `SYNC_CODE`) | Present |
+| STATUS = truth; NEXT_SESSION = next action only | Enforced |
 
-## Next verification milestone
-
-```text
-Objective: close the predicate-evaluation correctness gaps
-Required files: pred.cpp, pred.hpp, a focused unit-test fixture
-Acceptance:
-- disjoint shared-arena predicates evaluate only their dependencies;
-- unsupported predicate does not unintentionally poison later supported nodes,
-  or the per-trace behavior is explicitly accepted and tested;
-- short-input behavior is specified and tested;
-- all existing PCBT mode checks still pass.
-```
+When evidence changes, update this file and refresh
+[`SYNC_DOCS.md`](SYNC_DOCS.md) if the browser-facing summary would otherwise
+drift. Do not duplicate the next-action plan here.

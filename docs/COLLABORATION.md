@@ -9,6 +9,25 @@
 
 Neither chat surface should assume it sees the other's current files or history.
 
+## Default browser sync (preferred)
+
+For most planning/review turns, upload only:
+
+1. [`SYNC_DOCS.md`](SYNC_DOCS.md) — documentation/system digest
+2. [`SYNC_CODE.md`](SYNC_CODE.md) — critical code excerpt digest
+
+Optionally add:
+
+3. [`NEXT_SESSION.md`](NEXT_SESSION.md) — only when the next action is the topic
+
+Replace the previous Project copies of these digests when refreshing. Do **not**
+re-upload the full 15–20 file architecture bundle by default.
+
+Upload an individual source file only when:
+
+- the task edits that file; and
+- the SYNC_CODE excerpt is insufficient for the decision.
+
 ## Start-of-turn snapshot
 
 ```text
@@ -17,6 +36,7 @@ Worktree: <clean or changed files plus diff stat>
 Objective: <one concrete outcome>
 Latest verification: <command -> PASS/FAIL>
 Open decision: <none or one concrete question>
+Sync digests: <SYNC_DOCS/SYNC_CODE SHA or "dirty">
 ```
 
 ## Implementation handoff
@@ -41,13 +61,22 @@ Decisions/invariants: <IDs or bullets>
 Changed/inspected files: <paths>
 Behavioral result: <what changed>
 Verification: <command -> PASS/FAIL and key observation>
-Documentation updated: <paths>
-Open risks/blockers: <none or concrete issue>
+Documentation updated: <STATUS and/or SYNC_* and/or NEXT_SESSION>
+Open risks/blockers: <none or pointer into STATUS>
 Next owner/action: <ChatGPT Project | local Codex> — <action>
 ```
 
-Update `STATUS.md` when evidence changes and `NEXT_SESSION.md` when the next
-owner/action changes.
+### STATUS vs NEXT_SESSION update policy
+
+| Change | Update |
+|---|---|
+| Implementation or verification evidence | `STATUS.md` (required) |
+| Durable open issue list | `STATUS.md` (required) |
+| Next objective / owner / acceptance | `NEXT_SESSION.md` (only if changed) |
+| Browser-facing system summary would drift | `SYNC_DOCS.md` |
+| Critical code anchors / excerpts would drift | `SYNC_CODE.md` |
+
+Facts go to STATUS. Actions go to NEXT_SESSION. Do not duplicate paragraphs.
 
 ## Upload hygiene
 
@@ -57,25 +86,18 @@ dumps, credentials, tokens, SSH material, `.env*`, and unrelated benchmark
 data. Replace obsolete uploaded files rather than treating same-name uploads as
 version history.
 
-## Recommended architecture bundle
+## Full-source bundle (exceptional)
+
+Use only when digests are insufficient (e.g. deep code review of a whole path):
 
 1. `README.md`
 2. `AGENTS.md`
-3. `docs/README.md`
-4. `docs/ARCHITECTURE.md`
-5. `docs/RUNTIME_PROTOCOL.md`
-6. `docs/PCBT.md`
-7. `docs/STATUS.md`
-8. `docs/NEXT_SESSION.md`
-9. `symsan/driver/aflpp/symsan.cpp`
-10. `symsan/driver/aflpp/pcbt.hpp`
-11. `symsan/driver/aflpp/pcbt.cpp`
-12. `symsan/driver/aflpp/pred.hpp`
-13. `symsan/driver/aflpp/pred.cpp`
-14. `symsan/runtime/dfsan/dfsan.h`
-15. `symsan/backend/solver_common.cpp`
-16. `AFLplusplus/include/forkserver.h`
-17. `AFLplusplus/src/afl-forkserver.c`
-18. `AFLplusplus/src/afl-fuzz.c` (scheduler path for `pcbt_switch_pending`)
-19. the smallest affected test
-20. `scripts/run-fuzz.sh`
+3. `docs/SYNC_DOCS.md`
+4. `docs/SYNC_CODE.md`
+5. `docs/STATUS.md`
+6. `docs/NEXT_SESSION.md` (if action-relevant)
+7. the specific source files under discussion
+8. the smallest affected test
+9. `scripts/run-fuzz.sh` when operational behavior is in scope
+
+Prefer digests first; expand only as needed.

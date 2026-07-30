@@ -14,9 +14,11 @@ all four.
 | Run or configure the system | [CONFIGURATION.md](CONFIGURATION.md) |
 | Add tests or interpret results | [VERIFICATION.md](VERIFICATION.md) |
 | Check what is actually implemented | [STATUS.md](STATUS.md) |
-| Run reproducible experiments | [RESEARCH_CONTEXT.md](RESEARCH_CONTEXT.md) |
-| Coordinate ChatGPT Project and local Codex | [COLLABORATION.md](COLLABORATION.md) |
 | Continue from the latest milestone | [NEXT_SESSION.md](NEXT_SESSION.md) |
+| Sync ChatGPT Project with docs summary | [SYNC_DOCS.md](SYNC_DOCS.md) |
+| Sync ChatGPT Project with code excerpts | [SYNC_CODE.md](SYNC_CODE.md) |
+| Run reproducible experiments | [RESEARCH_CONTEXT.md](RESEARCH_CONTEXT.md) |
+| Coordinate browser Project and local agents | [COLLABORATION.md](COLLABORATION.md) |
 | Understand why a design was chosen | [decisions/](decisions/) |
 
 ## Evidence labels
@@ -36,14 +38,41 @@ Only `ARCHITECTURE.md`, `RUNTIME_PROTOCOL.md`, `PCBT.md`, and
 `CONFIGURATION.md` may define normative current behavior. `STATUS.md` decides
 whether that behavior is Verified, Code-reviewed, Documented, or Planned.
 
+## STATUS vs NEXT_SESSION
+
+| File | Owns | Does not own |
+|---|---|---|
+| [STATUS.md](STATUS.md) | feature matrix, evidence, durable gaps | next owner/action narrative |
+| [NEXT_SESSION.md](NEXT_SESSION.md) | single next objective, acceptance, owner | feature matrix / long logs |
+
+Rules:
+
+1. Facts → STATUS. Actions → NEXT_SESSION.
+2. Never paste the same paragraph into both.
+3. Milestone end: **always** update STATUS if evidence changed; update
+   NEXT_SESSION **only** if the next objective/owner/acceptance changed.
+4. Keep NEXT_SESSION under ~30 lines.
+
+## Browser sync digests
+
+Default ChatGPT Project upload is:
+
+1. [SYNC_DOCS.md](SYNC_DOCS.md) — integrated docs/system summary
+2. [SYNC_CODE.md](SYNC_CODE.md) — critical code excerpts
+
+Optional third file: [NEXT_SESSION.md](NEXT_SESSION.md) when planning the next
+action. Upload full sources only for the specific files under edit.
+
 ## Maintenance rules
 
 1. Keep the root README short and task-oriented.
 2. Put architecture invariants in architecture/protocol documents, not in
    milestone notes.
-3. Put temporary work and unresolved questions in `NEXT_SESSION.md`.
+3. Put temporary work and unresolved next actions in `NEXT_SESSION.md`.
 4. Record durable design choices as ADRs under `decisions/`.
 5. Move superseded brainstorming documents to `archive/`; do not keep two
    competing “current design” documents.
 6. Any behavioral claim must name its implementation path and verification
    command in `STATUS.md`.
+7. When STATUS/architecture/protocol/code anchors change, refresh the two SYNC
+   digests if the browser summary would otherwise drift.

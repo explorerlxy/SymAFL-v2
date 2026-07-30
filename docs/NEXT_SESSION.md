@@ -1,40 +1,29 @@
 # Next Session Handoff
 
+Action-only relay. **Do not** restate the feature matrix or long evidence logs;
+those live in [`STATUS.md`](STATUS.md).
+
 ```text
-Snapshot: superproject main (docs-system landing), AFLplusplus ef727c6, symsan ee90b4a,
-          clean published worktrees, 2026-07-30
-Objective: completed — land documentation system + matching protocol code and
-           re-verify transport modes
-Decisions/invariants:
-- ADR 0001 two-phase execution
-- ADR 0002 lifecycle-selected transport
-- ADR 0003 frontier-anchored suffix
-Changed/inspected files:
-- .gitignore, .gitmodules, README.md, AGENTS.md, CLAUDE.md
-- docs/** (map, archive, ADRs, STATUS, NEXT_SESSION)
-- scripts/**, tests/** (sources/harnesses; binaries ignored)
-- symsan: solver_common.cpp, dfsan.h, symsan.cpp, pred.cpp, driver/aflpp/README.md
-- AFLplusplus: forkserver.h, afl-forkserver.c (comments only)
-Verification:
-- python3 tests/trace_check.py direct -> PASS
-- python3 tests/trace_check.py afl -> PASS
-- python3 tests/pcbt_pipe_check.py -> PASS
-- python3 tests/pcbt_toy_modes_check.py -> PASS
-- FUZZ_SECONDS=30 scripts/run-fuzz.sh pcbt -> PASS (phase switch observed)
-Open risks/blockers:
-- shared-converter opacity; arena-prefix eval; InsertSuffix precondition trust
-- treat metrics saturated/timeouts/memerr carefully for papers
-Next owner/action: local Codex — start predicate-evaluation correctness
-                   milestone with focused unit tests
+Snapshot: superproject main, AFLplusplus ef727c6, symsan ee90b4a, clean, 2026-07-30
+Next objective: close predicate-evaluation correctness gaps
+Invariants: ADR 0001–0003; no transport/phase-switch changes in this milestone
+Start in:
+- symsan/driver/aflpp/pred.cpp
+- symsan/driver/aflpp/pred.hpp
+- focused unit fixture under symsan/tests/ or tests/
+Acceptance:
+- disjoint shared-arena predicates evaluate only their dependencies
+- converter opacity is either per-predicate or explicitly accepted/tested as per-trace
+- short-input direction rule is specified and regression-tested
+- existing PCBT mode checks still PASS
+Blockers: none beyond STATUS high-priority items 1–3 / medium 5
+Owner: local Codex
 ```
 
-## Current recommended next action
+## Refresh rules
 
-Start the predicate-evaluation milestone without mixing transport or
-phase-switch changes:
-
-1. Disjoint shared-arena predicates evaluate only their dependencies.
-2. Converter-wide opacity is either fixed per predicate or explicitly accepted
-   and tested as per-trace behavior.
-3. Short-input direction rule is specified and regression-tested.
-4. Existing PCBT mode checks remain green.
+- Update this file only when the next owner, next objective, or acceptance
+  commands change.
+- Keep the body under ~30 lines.
+- If STATUS already makes the next step obvious and no handoff is needed, leave
+  this file unchanged.

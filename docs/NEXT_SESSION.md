@@ -1,11 +1,10 @@
 # Next Session Handoff
 
 ```text
-Snapshot: superproject main after doc-system maintenance commits (local; push
-          pending remote reachability), AFLplusplus comment hygiene, symsan
-          lifecycle pipe-suffix / pred hygiene, 2026-07-30
+Snapshot: superproject main (docs-system landing), AFLplusplus ef727c6, symsan ee90b4a,
+          clean published worktrees, 2026-07-30
 Objective: completed — land documentation system + matching protocol code and
-           re-verify transport modes after rebuild
+           re-verify transport modes
 Decisions/invariants:
 - ADR 0001 two-phase execution
 - ADR 0002 lifecycle-selected transport
@@ -26,19 +25,16 @@ Open risks/blockers:
 - shared-converter opacity; arena-prefix eval; InsertSuffix precondition trust
 - treat metrics saturated/timeouts/memerr carefully for papers
 Next owner/action: local Codex — start predicate-evaluation correctness
-                   milestone with focused unit tests; push remotes if not yet
-                   published (submodules first, then superproject)
+                   milestone with focused unit tests
 ```
 
 ## Current recommended next action
 
-1. Confirm remotes are published:
-   - `AFLplusplus` main
-   - `symsan` v2-dev
-   - superproject main with matching submodule pointers
-2. Start the predicate-evaluation milestone:
-   - disjoint shared-arena predicates
-   - converter-wide opacity policy
-   - short-input direction rule
-3. Do not mix transport/phase-switch changes into that milestone unless a
-   regression proves coupling.
+Start the predicate-evaluation milestone without mixing transport or
+phase-switch changes:
+
+1. Disjoint shared-arena predicates evaluate only their dependencies.
+2. Converter-wide opacity is either fixed per predicate or explicitly accepted
+   and tested as per-trace behavior.
+3. Short-input direction rule is specified and regression-tested.
+4. Existing PCBT mode checks remain green.

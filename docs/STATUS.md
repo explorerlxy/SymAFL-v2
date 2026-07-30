@@ -6,8 +6,9 @@ every milestone with a revision and test result.
 ## Snapshot for the documentation-system maintenance pass
 
 ```text
-Snapshot: superproject main (doc hygiene landing), AFLplusplus main + drain comment
-          fix, symsan v2-dev + lifecycle pipe-suffix / pred hygiene
+Snapshot: superproject main (docs-system landing, published),
+          AFLplusplus main ef727c6 (published),
+          symsan v2-dev ee90b4a (published)
 Reviewed: README.md, AGENTS.md, CLAUDE.md, docs/* (new structure),
           symsan/driver/aflpp/{symsan.cpp,pcbt.hpp,pcbt.cpp,pred.hpp,pred.cpp,README.md},
           symsan/backend/solver_common.cpp, symsan/runtime/dfsan/dfsan.h,

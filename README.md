@@ -18,13 +18,13 @@ AFL++ 切换到独立的 concrete target，并以保留的 queue 在新的 cover
 详细契约见：
 
 - [文档索引](docs/README.md)
-- [系统架构](docs/ARCHITECTURE.md)
-- [运行时协议](docs/RUNTIME_PROTOCOL.md)
-- [PCBT 与谓词语义](docs/PCBT.md)
-- [配置参考](docs/CONFIGURATION.md)
-- [验证矩阵](docs/VERIFICATION.md)
-- [当前状态与已知缺口](docs/STATUS.md)
-- [浏览器同步：文档摘要](docs/SYNC_DOCS.md) / [关键代码摘要](docs/SYNC_CODE.md)
+- [系统架构](docs/system.md)
+- [运行时协议](docs/protocol.md)
+- [PCBT 与谓词语义](docs/pcbt.md)
+- [配置参考](docs/config.md)
+- [验证矩阵](docs/verify.md)
+- [当前状态与已知缺口](docs/status.md)
+- [浏览器同步：文档摘要](docs/sync-docs.md) / [关键代码摘要](docs/sync-code.md)
 
 ## 仓库结构
 

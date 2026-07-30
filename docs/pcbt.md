@@ -46,7 +46,7 @@ Full-trace insertion is the only insertion path that checks the known prefix for
 `InsertSuffix` directly attaches new nodes at a saved frontier. It deliberately
 performs no prefix replay and no conflict check. This is a semantic-preserving
 optimization only under the frontier-prefix invariant defined in
-`RUNTIME_PROTOCOL.md`.
+`protocol.md`.
 
 Because the implementation writes `cur->child[dir] = raw`, violating the
 unexplored-edge precondition can overwrite the reachable topology. Tests must

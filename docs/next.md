@@ -1,10 +1,10 @@
-# Next Session Handoff
+# Next Action
 
 Action-only relay. **Do not** restate the feature matrix or long evidence logs;
-those live in [`STATUS.md`](STATUS.md).
+those live in [`status.md`](status.md).
 
 ```text
-Snapshot: superproject main, AFLplusplus ef727c6, symsan ee90b4a, clean, 2026-07-30
+Snapshot: superproject main, AFLplusplus ef727c6, symsan ee90b4a, 2026-07-30
 Next objective: close predicate-evaluation correctness gaps
 Invariants: ADR 0001–0003; no transport/phase-switch changes in this milestone
 Start in:
@@ -16,14 +16,12 @@ Acceptance:
 - converter opacity is either per-predicate or explicitly accepted/tested as per-trace
 - short-input direction rule is specified and regression-tested
 - existing PCBT mode checks still PASS
-Blockers: none beyond STATUS high-priority items 1–3 / medium 5
+Blockers: none beyond status.md high-priority items 1–3 / medium 5
 Owner: local Codex
 ```
 
 ## Refresh rules
 
-- Update this file only when the next owner, next objective, or acceptance
-  commands change.
+- Update only when next owner, objective, or acceptance commands change.
 - Keep the body under ~30 lines.
-- If STATUS already makes the next step obvious and no handoff is needed, leave
-  this file unchanged.
+- If `status.md` already makes the next step obvious, leave this file alone.

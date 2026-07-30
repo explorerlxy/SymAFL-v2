@@ -8,15 +8,15 @@ SymAFL v2: a fuzzer built on private forks of AFL++ v4.31c and SymSan. The AFL++
 
 Authoritative current-behavior documents (read before changing architecture):
 
-- [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)
-- [docs/RUNTIME_PROTOCOL.md](docs/RUNTIME_PROTOCOL.md)
-- [docs/PCBT.md](docs/PCBT.md)
-- [docs/STATUS.md](docs/STATUS.md)
-- [docs/VERIFICATION.md](docs/VERIFICATION.md)
+- [docs/system.md](docs/system.md)
+- [docs/protocol.md](docs/protocol.md)
+- [docs/pcbt.md](docs/pcbt.md)
+- [docs/status.md](docs/status.md)
+- [docs/verify.md](docs/verify.md)
 
-Status vs handoff: `STATUS.md` = evidence/truth; `NEXT_SESSION.md` = next action only. For ChatGPT Project sync, prefer [docs/SYNC_DOCS.md](docs/SYNC_DOCS.md) + [docs/SYNC_CODE.md](docs/SYNC_CODE.md) over bulk doc uploads.
+Status vs handoff: `status.md` = evidence/truth; `next.md` = next action only. For ChatGPT Project sync, prefer [docs/sync-docs.md](docs/sync-docs.md) + [docs/sync-code.md](docs/sync-code.md) over bulk doc uploads.
 
-Historical design notes live under [docs/archive/](docs/archive/) and are **not** normative. The repository operating contract is [AGENTS.md](AGENTS.md). Documentation map: [docs/README.md](docs/README.md).
+Superseded design notes live in Git history and are **not** normative. The repository operating contract is [AGENTS.md](AGENTS.md). Documentation map: [docs/README.md](docs/README.md).
 
 ## Repo layout
 
@@ -75,7 +75,7 @@ AFLplusplus/afl-clang-fast -O1 tests/toy.c -o tests/toy-afl
 - Screening latency mean < 100µs/candidate; coverage ≥ 95% of baseline.
 - Evaluation targets must be deterministic — non-determinism poisons the tree.
 
-See [docs/VERIFICATION.md](docs/VERIFICATION.md) for the command matrix and [docs/STATUS.md](docs/STATUS.md) for evidence labels.
+See [docs/verify.md](docs/verify.md) for the command matrix and [docs/status.md](docs/status.md) for evidence labels.
 
 ## Git workflow for agents
 
@@ -86,4 +86,4 @@ Full policy lives in [AGENTS.md](AGENTS.md) (“Commit and pull-request guidelin
 - **Do not push:** thrashing WIP, secrets/local absolute paths, large fuzz outputs, or any superproject pointer whose submodule commit is not yet on the submodule remote.
 - **Submodule order:** commit in `symsan/` or `AFLplusplus/` → push submodule remote → commit superproject pointer → push superproject.
 - **Split themes:** metadata, docs/agent files, `scripts/`, `tests/`, and submodule bumps are separate commits. Keep scratch (`task/`, corpora, `/tmp` queues, binaries, logs) out of Git unless it is a small intentional fixture.
-- **After a milestone:** update [docs/STATUS.md](docs/STATUS.md) if evidence changed; update [docs/NEXT_SESSION.md](docs/NEXT_SESSION.md) only if the next objective/owner/acceptance changed; refresh [docs/SYNC_DOCS.md](docs/SYNC_DOCS.md) / [docs/SYNC_CODE.md](docs/SYNC_CODE.md) if browser digests would drift.
+- **After a milestone:** update [docs/status.md](docs/status.md) if evidence changed; update [docs/next.md](docs/next.md) only if the next objective/owner/acceptance changed; refresh [docs/sync-docs.md](docs/sync-docs.md) / [docs/sync-code.md](docs/sync-code.md) if browser digests would drift.

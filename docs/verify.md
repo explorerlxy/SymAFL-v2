@@ -7,7 +7,7 @@
 - Run toy tests before real targets.
 - Use deterministic inputs and a dedicated `/tmp` output directory.
 - A documented command is not evidence until its result is recorded in
-  `STATUS.md` or `NEXT_SESSION.md` with a snapshot revision.
+  `status.md` with a snapshot revision.
 
 ## Existing project checks
 

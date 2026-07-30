@@ -50,7 +50,7 @@ Use measurable outcomes rather than vague success language:
 - unique crash stacks and minimized reproductions;
 - patch regression PASS/FAIL.
 
-Caveated introspection fields listed in `CONFIGURATION.md` must not be treated as
+Caveated introspection fields listed in `config.md` must not be treated as
 validated metrics until corrected.
 
 ## Copyable request context

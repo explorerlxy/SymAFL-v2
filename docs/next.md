@@ -17,7 +17,7 @@ Acceptance:
 - short-input direction rule is specified and regression-tested
 - existing PCBT mode checks still PASS
 Blockers: none beyond status.md high-priority items 1–3 / medium 5
-Owner: local Codex
+Owner: Codex VS Code
 ```
 
 ## Refresh rules

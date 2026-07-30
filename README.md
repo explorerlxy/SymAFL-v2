@@ -15,16 +15,14 @@ AFL++ 切换到独立的 concrete target，并以保留的 queue 在新的 cover
 5. PCBT 饱和后，mutator 设置 phase-switch 请求；AFL++ 在调度边界切换 concrete
    forkserver，并重建 coverage 派生状态。
 
-详细契约见：
+详细资料：
 
 - [文档索引](docs/README.md)
-- [系统架构](docs/system.md)
-- [运行时协议](docs/protocol.md)
-- [PCBT 与谓词语义](docs/pcbt.md)
-- [配置参考](docs/config.md)
-- [验证矩阵](docs/verify.md)
-- [当前状态与已知缺口](docs/status.md)
-- [浏览器同步：文档摘要](docs/sync-docs.md) / [关键代码摘要](docs/sync-code.md)
+- [系统设计与 PCBT 语义](docs/system.md)
+- [评测设计、配置与验证标准](docs/evaluation.md)
+- [工程实现映射与实验结果](docs/status.md)
+- [ChatGPT-Codex 协作](docs/chatgpt-codex-cooperation.md)
+- [关键代码摘要](docs/sync-code.md)
 
 ## 仓库结构
 
@@ -34,7 +32,7 @@ SymAFL-v2/
 ├── symsan/                     # SymSan 分支；mutator、PCBT、谓词解释器、DFSan runtime
 ├── scripts/                    # 构建、冒烟、评测入口
 ├── tests/                      # toy、pipe stress、forkserver 与模式回归
-├── docs/                       # 架构、协议、验证、状态、决策记录
+├── docs/                       # 设计、评测、工程状态、协作、决策记录
 ├── README.md                   # 用户入口
 └── AGENTS.md                   # 仓库级操作约束；细节委托给 docs/
 ```

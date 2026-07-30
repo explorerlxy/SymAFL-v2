@@ -1,104 +1,89 @@
 # Documentation Map
 
-Docs are split by role. One fact lives in one place; other files link, they do not restate.
+The active documentation has one owner per class of information. Logical design,
+engineering realization, and next action are intentionally distinct.
 
-| Role | Files |
+| Role | File |
 |---|---|
-| Normative behavior | `system.md`, `protocol.md`, `pcbt.md`, `config.md` |
-| Evidence / next action | `status.md`, `next.md` |
-| How to test / experiment | `verify.md`, `research.md` |
-| Collaboration / browser sync | `workflow.md`, `sync-docs.md`, `sync-code.md` |
-| Why (accepted decisions) | `adr/` |
-| History | **Git only** — no `docs/archive/` |
+| Logical system design, runtime workflow, PCBT semantics | [system.md](system.md) |
+| Logical evaluation design, configuration, verification criteria, reproducibility | [evaluation.md](evaluation.md) |
+| Current code-path mapping, executed results, durable engineering gaps | [status.md](status.md) |
+| One next objective, owner, and acceptance | [next.md](next.md) |
+| ChatGPT Project and Codex collaboration | [chatgpt-codex-cooperation.md](chatgpt-codex-cooperation.md) |
+| Critical-code synchronization digest | [sync-code.md](sync-code.md) |
+| Accepted architecture decisions | [adr/](adr/) |
+| Superseded documents | Git history only |
 
 ## Read by task
 
 | Task | Open |
 |---|---|
-| Whole system | [system.md](system.md) |
-| Trace transport / forkserver / phase switch | [protocol.md](protocol.md) |
-| Tree / predicate semantics | [pcbt.md](pcbt.md) |
-| Env vars and run modes | [config.md](config.md) |
-| What is implemented + evidence | [status.md](status.md) |
-| What to do next | [next.md](next.md) |
-| Commands and expected observations | [verify.md](verify.md) |
-| Experiment identity / reproducibility | [research.md](research.md) |
-| Local agent ↔ ChatGPT Project | [workflow.md](workflow.md) |
-| Browser upload: docs digest | [sync-docs.md](sync-docs.md) |
-| Browser upload: code digest | [sync-code.md](sync-code.md) |
-| Why a design was chosen | [adr/](adr/) |
-| Doc routing (this file) | [README.md](README.md) |
+| Understand the complete system and PCBT contribution | [system.md](system.md) |
+| Design an experiment, configure a target, or define validation | [evaluation.md](evaluation.md) |
+| Locate the current implementation and its recorded results | [status.md](status.md) |
+| Continue assigned work | [next.md](next.md) |
+| Coordinate browser ChatGPT and local Codex work | [chatgpt-codex-cooperation.md](chatgpt-codex-cooperation.md) |
+| Provide browser code context | [sync-code.md](sync-code.md) |
+| Understand why a durable decision was accepted | [adr/](adr/) |
 
-Root entrypoints outside `docs/`:
+Root entrypoints:
 
-- [`../README.md`](../README.md) — human project entry
-- [`../AGENTS.md`](../AGENTS.md) — repository operating contract
-- [`../CLAUDE.md`](../CLAUDE.md) — local agent skim of the same contract
+- [README.md](../README.md) — human project entry
+- [AGENTS.md](../AGENTS.md) — repository operating contract
+- [CLAUDE.md](../CLAUDE.md) — local-agent operating skim
 
-## Evidence labels
+## Logical design versus engineering realization
 
-Use only in `status.md` (and briefly mirrored in digests):
+[system.md](system.md) and [evaluation.md](evaluation.md) define the intended
+logical model. `system.md` owns components, data/control flow, PCBT semantics,
+and invariants. `evaluation.md` owns evaluation questions, comparison design,
+configuration method, verification criteria, metrics, and result interpretation.
 
-- **Verified** — code present + recorded PASS
-- **Code-reviewed** — code present; directed PASS missing or partial
-- **Documented** — claimed by normative docs; implementation/test incomplete
-- **Planned** — not current behavior
+[status.md](status.md) owns the current engineering realization for a named
+snapshot: code paths implementing the logical system, commands actually run,
+measured results, log locations, and durable gaps. A design statement is not
+implementation evidence until status identifies both code and an observation.
 
-Only `system.md`, `protocol.md`, `pcbt.md`, and `config.md` define normative
-current behavior. `status.md` decides whether that behavior is Verified,
-Code-reviewed, Documented, or Planned.
-
-## status vs next
+## Evidence and handoff
 
 | File | Owns | Does not own |
 |---|---|---|
-| [status.md](status.md) | feature matrix, PASS/FAIL, durable gaps | next owner/action story |
-| [next.md](next.md) | one next objective, acceptance, owner | matrix / long logs |
+| [status.md](status.md) | code mapping, feature evidence, PASS/FAIL, metrics, durable gaps | next action narrative |
+| [next.md](next.md) | one next objective, acceptance, owner | evidence matrix and logs |
 
-Rules:
+Facts and evidence go to `status.md`; actions go to `next.md`. Never duplicate
+paragraphs. Update `status.md` when implementation evidence changes. Update
+`next.md` only when objective, owner, or acceptance changes.
 
-1. Facts → `status.md`. Actions → `next.md`.
-2. Never paste the same paragraph into both.
-3. Milestone end: always update `status.md` if evidence changed; update
-   `next.md` only if objective/owner/acceptance changed.
-4. Keep `next.md` under ~30 lines.
+## Browser context
 
-## Browser sync
-
-Default ChatGPT Project upload:
-
-1. [sync-docs.md](sync-docs.md)
-2. [sync-code.md](sync-code.md)
-3. optional [next.md](next.md) when the next action is the topic
-
-Upload full sources only for files under active edit. Digests can lag; Git
-worktree + submodule SHAs remain truth.
+Upload the active documents directly: `system.md`, `evaluation.md`, `status.md`,
+optional `next.md`, and `sync-code.md`. There is no `sync-docs.md`; it would
+repeat the small canonical documents. The sync-code structure, incremental
+refresh rules, upload hygiene, and handoff formats are defined in
+[chatgpt-codex-cooperation.md](chatgpt-codex-cooperation.md).
 
 ## Maintenance
 
-1. Root README stays short and task-oriented.
-2. Architecture invariants live in normative docs, not in `next.md`.
-3. Durable decisions go under `adr/` as ADRs.
-4. Do **not** keep superseded design prose under `docs/`. Recover old text from
-   Git history when needed (`git log -- docs/`, `git show <rev>:docs/...`).
-5. Behavioral claims name an implementation path and a verification command in
-   `status.md`.
-6. When normative behavior, evidence, or critical code anchors change, refresh
-   `sync-docs.md` / `sync-code.md` if browser summaries would drift.
+1. Keep `README.md` short and task-oriented.
+2. Keep logical design in `system.md` and `evaluation.md`, not in `next.md`.
+3. Keep implementation mapping and actual evidence in `status.md`.
+4. Record durable architecture choices under `adr/`.
+5. Do not retain superseded prose under `docs/`; recover it through Git history
+   with `git log -- docs/` and `git show <revision>:docs/...`.
+6. Refresh `sync-code.md` only when its code anchors, snapshot, verification
+   excerpt, or code-risk summary would drift.
 
-## Rename legend (this refactor)
+## Rename legend
 
-| Old | New |
+| Former active path | Current owner |
 |---|---|
-| `ARCHITECTURE.md` | `system.md` |
-| `RUNTIME_PROTOCOL.md` | `protocol.md` |
-| `PCBT.md` | `pcbt.md` |
-| `CONFIGURATION.md` | `config.md` |
-| `VERIFICATION.md` | `verify.md` |
+| `ARCHITECTURE.md`, `RUNTIME_PROTOCOL.md`, `PCBT.md` | `system.md` |
+| `CONFIGURATION.md`, `VERIFICATION.md`, `RESEARCH_CONTEXT.md` | `evaluation.md` |
 | `STATUS.md` | `status.md` |
 | `NEXT_SESSION.md` | `next.md` |
-| `RESEARCH_CONTEXT.md` | `research.md` |
-| `COLLABORATION.md` | `workflow.md` |
-| `SYNC_DOCS.md` / `SYNC_CODE.md` | `sync-docs.md` / `sync-code.md` |
+| `COLLABORATION.md`, `workflow.md` | `chatgpt-codex-cooperation.md` |
+| `SYNC_DOCS.md`, `sync-docs.md` | removed; upload canonical docs directly |
+| `SYNC_CODE.md` | `sync-code.md` |
 | `decisions/` | `adr/` |
-| `archive/`, `MIGRATION.md` | removed (Git history) |
+| `archive/`, `MIGRATION.md` | removed; Git history |

@@ -17,10 +17,9 @@ A claim about current code is valid only when it identifies:
 Before changing architecture or runtime behavior, read:
 
 - `docs/system.md`
-- `docs/protocol.md`
-- `docs/pcbt.md`
+- `docs/evaluation.md`
 - `docs/status.md`
-- `docs/verify.md`
+- `docs/chatgpt-codex-cooperation.md`
 
 Git history records superseded documentation and code. Do not retain obsolete
 design documents under `docs/`; they are not normative implementation sources.
@@ -45,8 +44,8 @@ screening, defect diagnosis, and regression evaluation.
   minimized inputs, root-cause evidence, and regression status.
 - Prefer precise research language over vague operational descriptions.
 
-See `docs/research.md` for the experiment statement, reproducibility record,
-and copyable session context.
+See `docs/evaluation.md` for experiment design, reproducibility requirements,
+configuration, and verification criteria.
 
 ## Architecture invariants
 
@@ -147,7 +146,7 @@ scripts/eval-xz.sh [afl|noscreen|screen|all]
 ```
 
 Run the smallest relevant check first, then run the full affected matrix
-documented in `docs/verify.md`.
+documented in `docs/evaluation.md`.
 
 Verification records must include:
 
@@ -178,8 +177,9 @@ property into an observed result without evidence.
   commands change. Keep it action-only and short; never restate the matrix or
   long verification logs there.
 - Facts go to status; actions go to next. Do not duplicate paragraphs.
-- When browser-facing summaries would drift, refresh `docs/sync-docs.md` and/or
-  `docs/sync-code.md` (the default ChatGPT Project upload pair).
+- When critical-code context would drift, refresh `docs/sync-code.md`. Upload
+  the canonical system, evaluation, and status documents directly; do not
+  maintain a duplicate documentation digest.
 - Record durable architecture decisions under `docs/adr/`.
 - Recover superseded documentation from Git history rather than retaining it in
   the active `docs/` tree.
@@ -213,23 +213,25 @@ Follow the surrounding file.
 - Do not commit large corpora, fuzz queues, raw benchmark output, binaries, core
   dumps, or transient logs.
 
-## VS Code Codex and ChatGPT Project collaboration
+## ChatGPT-Codex cooperation
 
 Browser-side ChatGPT Project work and the local VS Code/Codex checkout do not
 share conversation history or a live file view. Treat the Project as a curated
 planning/review surface and the local Git worktree as the only implementation
 truth.
 
-See `docs/workflow.md` for the full protocol. The following rules are mandatory.
+See `docs/chatgpt-codex-cooperation.md` for the full protocol. The following rules are mandatory.
 
 ### Roles
 
-- **ChatGPT Project:** architecture discussion, literature/design analysis,
-  task decomposition, review criteria, and durable decisions.
+- **ChatGPT Project:** innovation framing, literature/design analysis,
+  architecture planning, task decomposition, decision analysis, and acceptance
+  criteria.
 - **Codex in VS Code:** inspect and edit the local checkout, run builds/tests,
-  and update repository records.
+  collect evidence, and prepare repository/Git handoffs.
 - **Git and repository documents:** canonical implementation and verification
-  state.
+  state; browser proposals become durable only after local validation and
+  recording in the appropriate document or ADR.
 
 ### Synchronization protocol
 
@@ -243,12 +245,13 @@ See `docs/workflow.md` for the full protocol. The following rules are mandatory.
    to inspect.
 4. End each Codex milestone with a repository handoff. Always update
    `docs/status.md` if evidence changed. Update `docs/next.md` only if the next
-   objective/owner/acceptance changed. Refresh `docs/sync-docs.md` and
-   `docs/sync-code.md` when the browser digests would otherwise drift.
-5. Refresh Project files deliberately. Default upload is the two digests in
-   `docs/sync-docs.md` and `docs/sync-code.md` (optionally `next.md`).
-   Remove obsolete uploaded sources before uploading replacements; do not
-   assume same-name uploads form a reliable version history.
+   objective/owner/acceptance changed. Refresh `docs/sync-code.md` only when its
+   code context would otherwise drift; upload canonical documents directly.
+5. Refresh Project files deliberately. Upload `docs/system.md`,
+   `docs/evaluation.md`, `docs/status.md`, optional `docs/next.md`, and
+   `docs/sync-code.md`. Remove obsolete uploaded sources before uploading
+   replacements; do not assume same-name uploads form a reliable version
+   history.
 6. Serialize authority. Do not run conflicting browser-directed and local edits
    concurrently.
 
@@ -263,8 +266,9 @@ Upload text-first, reviewable source files. Do not upload:
 - credentials, API keys, access tokens, SSH material, or `.env*`; or
 - data outside the declared research boundary.
 
-**Default Project upload:** `docs/sync-docs.md` + `docs/sync-code.md`.
-Add full source files only for paths under active edit when digests are not
+**Default Project upload:** `docs/system.md`, `docs/evaluation.md`,
+`docs/status.md`, optional `docs/next.md`, and `docs/sync-code.md`.
+Add full source files only for paths under active edit when this context is not
 enough. Prefer concise milestone summaries over full terminal logs; retain
 detailed logs locally under `/tmp`.
 
@@ -391,4 +395,4 @@ small coherent change -> local commit
   -> push feature branch (or stable main)
   -> update docs/status.md if evidence changed
   -> update docs/next.md only if next action/owner/acceptance changed
-  -> refresh docs/sync-docs.md / docs/sync-code.md if browser digests would drift
+  -> refresh docs/sync-code.md if critical code context would drift

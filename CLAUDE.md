@@ -6,15 +6,14 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 SymAFL v2: a fuzzer built on private forks of AFL++ v4.31c and SymSan. The AFL++ fork contains constrained SymAFL scheduling changes for PCBT pipe draining and concolic-to-concrete forkserver switching. A custom mutator (`libSymSanMutator.so`) uses a **PCBT** (Path Constraint Binary Tree) to *screen* mutated candidates in-process via the AFL++ `post_process` hook: candidates that cannot reach an unexplored branch frontier are vetoed before execution. There is **no constraint solving** — the current PCBT evaluates predicates with its local bit-vector interpreter. PCBT mode needs a concolic and a concrete target: until the PCBT saturates, every admitted candidate is a concolic run; then AFL++ retains the queue, rebuilds coverage against the concrete target, and continues as ordinary AFL++.
 
-Authoritative current-behavior documents (read before changing architecture):
+Read before changing architecture, behavior, experiment design, or verification:
 
-- [docs/system.md](docs/system.md)
-- [docs/protocol.md](docs/protocol.md)
-- [docs/pcbt.md](docs/pcbt.md)
-- [docs/status.md](docs/status.md)
-- [docs/verify.md](docs/verify.md)
+- [docs/system.md](docs/system.md) — logical system design, workflow, PCBT semantics
+- [docs/evaluation.md](docs/evaluation.md) — evaluation design, configuration, verification criteria
+- [docs/status.md](docs/status.md) — current code mapping, recorded evidence, durable gaps
+- [docs/chatgpt-codex-cooperation.md](docs/chatgpt-codex-cooperation.md) — cross-surface roles and sync rules
 
-Status vs handoff: `status.md` = evidence/truth; `next.md` = next action only. For ChatGPT Project sync, prefer [docs/sync-docs.md](docs/sync-docs.md) + [docs/sync-code.md](docs/sync-code.md) over bulk doc uploads.
+`status.md` is engineering truth for a named snapshot; `next.md` is the next action only. Browser context uses the canonical documents directly plus [docs/sync-code.md](docs/sync-code.md), not a duplicate docs digest.
 
 Superseded design notes live in Git history and are **not** normative. The repository operating contract is [AGENTS.md](AGENTS.md). Documentation map: [docs/README.md](docs/README.md).
 
@@ -24,13 +23,13 @@ Superseded design notes live in Git history and are **not** normative. The repos
 - `symsan/` — private submodule (`git@github.com:explorerlxy/SymAFL-Symsan.git`, branch `v2-dev`), the **development mainline**:
   - `driver/aflpp/symsan.cpp` — AFL++ custom mutator: `init`, `post_process` (veto), `queue_get`/`queue_new_entry` (trace hooks); solver/fuzz chain stripped.
   - `driver/aflpp/pcbt.{hpp,cpp}` — PCBT core: `InsertTrace` (divergence-point insertion from symbolic-branch event streams) and `CheckInput` (frontier screening).
-  - `driver/aflpp/pred.{hpp,cpp}` — predicate representation and SMT-LIB-compatible, ≤64-bit interpreter. Unsupported/wider expressions become opaque and are conservatively admitted.
+  - `driver/aflpp/pred.{hpp,cpp}` — predicate representation and SMT-LIB-compatible, <=64-bit interpreter. Unsupported/wider expressions become opaque and are conservatively admitted.
   - `runtime/dfsan/dfsan_custom.cpp` — taint runtime; contains the forkserver input-label preallocation patch (`taint_max_len`).
   - `backend/solver_common.cpp` — condition-event export and lifecycle transport modes.
   - `solvers/jigsaw/` — retained dependency code; the current mutator does not invoke its JIT or solving path.
 - `tests/` — `toy.c` smoke target, seeds, pipe/mode/trace harnesses.
 - `scripts/` — build, smoke, and evaluation entrypoints.
-- `docs/` — architecture, protocol, verification, status, ADRs, archive.
+- `docs/` — logical design, evaluation design, engineering status, cooperation, and ADRs.
 - `third_party/z3*` — Z3 built from source (required by symsan string-theory APIs; system libz3 is too old).
 
 ## Commands
@@ -67,15 +66,15 @@ AFLplusplus/afl-clang-fast -O1 tests/toy.c -o tests/toy-afl
 - Mutator env: `AFL_CUSTOM_MUTATOR_LIBRARY=symsan/build/bin/libSymSanMutator.so`, `SYMAFL_CONCOLIC_TARGET=<traced binary>`, `SYMAFL_CONCRETE_TARGET=<normal AFL binary>`; screening toggles: `SYMAFL_NO_SCREEN=1` (disable), `SYMAFL_RCNT_LIMIT=<n>`. Mutator stats are printed by `afl_custom_deinit` on exit (nodes/depth/admitted/vetoed/selfcheck_fail).
 - Toolchain is pinned to **clang-18** (Ubuntu 24.04); ko-clang is an LLVM-18 pass.
 - Event stream semantics: each concolic child executes the complete DFSan propagation and label-DAG construction. Bootstrap exports the complete symbolic-condition sequence over pipe; steady state exports only the known-frontier suffix into bounded SHM; an SHM overflow on a coverage-gaining input is rerun as a pipe suffix. `afl-fuzz` drains pipe data while waiting for the target child, and the mutator inserts it after the run; no launcher sidecar is used. `SYMAFL_TRACE_MODE` is ignored — lifecycle selects transport.
-- Predicate semantic boundary: `pred.cpp` supports only ≤64-bit integer bit-vectors and follows SMT-LIB division-by-zero and wide-shift rules. Other expressions become opaque and must be admitted. Any future JIT must be cross-validated against this interpreter and Z3 before use.
+- Predicate semantic boundary: `pred.cpp` supports only <=64-bit integer bit-vectors and follows SMT-LIB division-by-zero and wide-shift rules. Other expressions become opaque and must be admitted. Any future JIT must be cross-validated against this interpreter and Z3 before use.
 
-## Verification targets
+## Evaluation targets
 
-- Replay consistency ≥ 99% (admitted candidates actually reach predicted frontier; mismatched traces are discarded, never inserted).
-- Screening latency mean < 100µs/candidate; coverage ≥ 95% of baseline.
+- Replay consistency >= 99% (admitted candidates actually reach predicted frontier; mismatched traces are discarded, never inserted).
+- Screening latency mean < 100us/candidate; coverage >= 95% of baseline.
 - Evaluation targets must be deterministic — non-determinism poisons the tree.
 
-See [docs/verify.md](docs/verify.md) for the command matrix and [docs/status.md](docs/status.md) for evidence labels.
+See [docs/evaluation.md](docs/evaluation.md) for experiment and command design, and [docs/status.md](docs/status.md) for current results.
 
 ## Git workflow for agents
 
@@ -84,6 +83,6 @@ Full policy lives in [AGENTS.md](AGENTS.md) (“Commit and pull-request guidelin
 - **Commit locally often, by intent:** one coherent change per commit (fix, script, doc section, harness). Commit after green checks, before risky edits, and before pausing a session. Do not dump unrelated files into one commit.
 - **Push less often, when shareable:** push for backup, review, handoff, or a reproducible milestone. Prefer `feature/*` / `exp/*`; push `main` only when relatively stable and documented.
 - **Do not push:** thrashing WIP, secrets/local absolute paths, large fuzz outputs, or any superproject pointer whose submodule commit is not yet on the submodule remote.
-- **Submodule order:** commit in `symsan/` or `AFLplusplus/` → push submodule remote → commit superproject pointer → push superproject.
+- **Submodule order:** commit in `symsan/` or `AFLplusplus/` -> push submodule remote -> commit superproject pointer -> push superproject.
 - **Split themes:** metadata, docs/agent files, `scripts/`, `tests/`, and submodule bumps are separate commits. Keep scratch (`task/`, corpora, `/tmp` queues, binaries, logs) out of Git unless it is a small intentional fixture.
-- **After a milestone:** update [docs/status.md](docs/status.md) if evidence changed; update [docs/next.md](docs/next.md) only if the next objective/owner/acceptance changed; refresh [docs/sync-docs.md](docs/sync-docs.md) / [docs/sync-code.md](docs/sync-code.md) if browser digests would drift.
+- **After a milestone:** update [docs/status.md](docs/status.md) if engineering evidence changed; update [docs/next.md](docs/next.md) only if the next objective/owner/acceptance changed; refresh [docs/sync-code.md](docs/sync-code.md) only when its code context drifts.

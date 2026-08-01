@@ -57,7 +57,7 @@ def main():
         AFL_CUSTOM_MUTATOR_LIBRARY=os.path.join(SYMSAN, "libSymSanMutator.so"),
         SYMAFL_CONCOLIC_TARGET=TRACE,
         SYMAFL_CONCRETE_TARGET=CONCRETE,
-        SYMAFL_RCNT_LIMIT="10000",
+        SYMAFL_RCNT_LIMIT="255",
         SYMAFL_SINGLE_PASS_CAPACITY="1",
         TAINT_OPTIONS=(f"taint_file={out}/default/.cur_input:taint_max_len=65536:"
                        "exit_on_memerror=false"),

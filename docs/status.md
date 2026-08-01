@@ -62,6 +62,35 @@ Logs: /tmp/symafl-opaque-final-build.log,
       /tmp/symafl-v2-xz/opaque-total-20260801T000000Z
 ```
 
+fmemcmp constant-pointer fix, 2026-08-01 (symsan v2-dev 6ea7116):
+
+```text
+Root cause: DFSan runtime swaps fmemcmp operands for commutative dedup,
+leaving the constant memcmp target's address (not its bytes) in op1/op2.
+The mutator cannot dereference target-process pointers, so the predicate
+compared against the pointer value instead of the magic bytes. This made
+the XZ valid seed incorrectly vetoed (predicate evaluated to 0 for any
+input).
+
+Fix: mark fmemcmp labels with a constant operand whose value is in the
+application memory range as opaque (conservative admission, no guessing).
+
+clang++-18 ... tests/pcbt_predicate_check.cpp ... && /tmp/pcbt_predicate_check
+                                                    -> PASS
+python3 tests/trace_check.py direct                  -> PASS; 11 symbolic conditions
+python3 tests/trace_check.py afl                     -> PASS; 42210 symbolic conditions
+python3 tests/pcbt_pipe_check.py                     -> PASS; 65536 events drained
+python3 tests/pcbt_toy_modes_check.py                -> PASS; pipe-full -> SHM overflow -> pipe-suffix
+python3 tests/collect_fuzz_metrics_test.py           -> PASS; 4 tests OK
+RUN_ID=final-verify FUZZ_SECONDS=10 scripts/eval-xz.sh pcbt
+                                                    -> PASS (diagnostic)
+  paired-target smoke passed; opaque=3, veto_terminal=0, veto_rlimit=0,
+  screened=221, admitted=221, executed=219, traces=29, nodes=3259,
+  depth=2357, admit_opaque=220, admit_eval_failure=0, admit_frontier=0.
+  Tree now grows from both seeds and mutated inputs; no incorrect vetoes.
+Logs: /tmp/symafl-v2-xz/final-verify
+```
+
 ## System realization map
 
 | Logical component or workflow | Current implementation paths | Status | Recorded verification | Caveat |
@@ -75,7 +104,7 @@ Logs: /tmp/symafl-opaque-final-build.log,
 | Concrete phase switch and state reset | `symsan.cpp`; `AFLplusplus/src/afl-fuzz.c` | Verified | 30-second PCBT smoke | longer benchmark evidence remains open |
 | Terminal-edge semantics | `pcbt.cpp:InsertSuffix`, `CheckInput` | Verified | PCBT smoke and transport regression | direct topology unit test remains desirable |
 | Compact PCBT storage | `pcbt.{hpp,cpp}` | Verified | 2026-07-31 PCBT matrix | 32-bit node references; `0`/`1` are unexplored/terminal; no per-node ID or terminal flags |
-| Scalar predicate conversion/interpreter | `symsan/driver/aflpp/pred.cpp` | Code-reviewed | iterative conversion, per-root rollback/resource accounting, shared candidate cache, direct <=8-byte `fmemcmp==0`; focused regression PASS | full transport matrix pending after this change; wide/string/FP grammar remains explicit fallback/preflight scope |
+| Scalar predicate conversion/interpreter | `symsan/driver/aflpp/pred.cpp` | Verified | iterative conversion, per-root rollback/resource accounting, shared candidate cache, direct <=8-byte `fmemcmp==0`; focused regression PASS; fmemcmp constant-pointer opaque fix verified on XZ | wide/string/FP grammar remains explicit fallback/preflight scope; fmemcmp with constant-pointer operands conservatively admitted as opaque |
 | Memerr/UCSan finding binding | mutator decoder | Planned | decoder skips non-condition frames | do not claim it as built |
 | Timeout and memerr counters | mutator statistics | Declared only | none | counters are not incremented |
 | Jigsaw in PCBT hot path | `symsan/solvers/jigsaw/` retained only | Verified absent | code review | local interpreter is active path |
@@ -96,6 +125,7 @@ been recorded and must not be inferred from the existence of scripts.
 | Concrete baseline | evaluation design exists | no result recorded here | `scripts/run-fuzz.sh baseline` is available | execute and record before comparative claim |
 | Screening-overhead controls | evaluation design exists | no result recorded here | `single`, `single-taint`, and no-screen modes available | measure latency, throughput, RSS, CPU |
 | Benchmark contribution / XZ throughput pilot | sequential 30 s × 1 run each: concrete AFL, no-screen concolic, PCBT; dual XZ builds from local `xz` source `6e8732c`, seeds under `test/Realworld/xz/seeds`, SHA256 checks disabled for concolic TaintPass stability | Earlier pilot remains only a pilot. New 10 s PCBT diagnostic has `opaque=0` and `veto_terminal=18615`, but learned only `traces=1/nodes=1`; `admit_eval_failure=3167` and no frontier/suffix capture. It establishes the local opaque fix, not safe multi-entry screening or comparative performance. | `/tmp/symafl-v2-xz/opaque-total-20260801T000000Z` | establish entry-trace-class routing before claiming valid/malformed multi-root screening; rerun full matrix; TaintPass crash still forces no SHA256 |
+| XZ fmemcmp constant-pointer fix | 10 s PCBT diagnostic with opaque fmemcmp predicates | `opaque=3`, `veto_terminal=0`, `veto_rlimit=0`, `traces=29`, `nodes=3259`, `depth=2357`, `admit_opaque=220`, `admit_eval_failure=0`, `admit_frontier=0`. Tree grows from both seeds and mutated inputs; no incorrect vetoes. Screening is effectively disabled (all admissions are opaque). | `/tmp/symafl-v2-xz/final-verify` | fmemcmp predicates are opaque; no terminal/rlimit vetoes possible; fix runtime to copy constant bytes for precise screening |
 
 ## Durable engineering gaps
 
@@ -112,7 +142,13 @@ been recorded and must not be inferred from the existence of scripts.
    sequence is not yet safe to use for candidates whose first symbolic
    condition belongs to another sequence; define class affinity or a
    conservative multi-root dispatcher before screening such candidates.
-6. **XZ short-input admissions and suffix coverage.** The latest diagnostic
+6. **XZ fmemcmp screening disabled.** The 2026-08-01 fix marks fmemcmp
+   predicates with constant-pointer operands as opaque. The tree now grows
+   from both XZ seeds and mutated inputs (traces=29, nodes=3259, depth=2357),
+   but all admissions are opaque (no terminal/rlimit vetoes). Precise
+   screening requires copying constant bytes in the runtime, which crashes
+   for invalid pointers; a safe copy mechanism is needed.
+7. **XZ short-input admissions and suffix coverage.** The latest diagnostic
    eliminates opaque nodes but has `admit_eval_failure=3167`, one learned node,
    and no frontier/suffix capture. It is not evidence of complete XZ filtering.
 

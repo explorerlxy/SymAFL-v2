@@ -36,7 +36,7 @@ evaluation goals, not recorded results.
 | Phase switch | concolic and concrete toy binaries | PCBT mode, smoke retry limit | `scripts/run-fuzz.sh pcbt` | PCBT activity then concrete restart | `status.md` |
 | Concrete control | concrete toy binary | no custom mutator | `scripts/run-fuzz.sh baseline` | normal AFL++ coverage control | `status.md` |
 | Concolic overhead controls | traced toy binary | no taint / taint, no PCBT screen | `scripts/run-fuzz.sh single`, `single-taint`; `SYMAFL_NO_SCREEN=1` where needed | isolate forkserver, taint, and screening cost | `status.md` |
-| Benchmark evaluation | deterministic published offline-buildable benchmark | declared benchmark build, corpus, resources, baseline variants | `scripts/eval-xz.sh [afl|noscreen|screen|all]` or benchmark-specific entrypoint | coverage, throughput, resource use, admission/veto behavior | `status.md` and retained `/tmp` logs |
+| Benchmark evaluation | deterministic published offline-buildable benchmark | declared dual-target build, corpus, resources, baseline variants | `scripts/build-xz-benchmark.sh`; `scripts/eval-xz.sh [--smoke] [afl\|noscreen\|pcbt\|all]` | coverage, AFL execution throughput, resource use, admission/veto behavior | `status.md` and retained `/tmp` logs |
 
 A benchmark experiment must compare a clearly specified baseline, no-screen
 concolic mode when applicable, and screened PCBT mode. It must report what its
@@ -90,12 +90,13 @@ repository drive.
 | Variable | Default | Current meaning |
 |---|---:|---|
 | `SYMAFL_SINGLE_PASS_CAPACITY` | `1048576` events | SHM suffix capacity, positive integer up to `UINT32_MAX` |
-| `SYMAFL_RCNT_LIMIT` | `16` | non-gaining admissions allowed per frontier direction |
+| `SYMAFL_RCNT_LIMIT` | `16` | non-gaining admissions allowed per frontier direction; integer `0..255` |
 | `SYMAFL_NO_SCREEN` | unset | disables PCBT screening and capture arming; use as a concolic-overhead control |
 | `SYMAFL_TRACE_MODE` | unset | ignored; lifecycle selects transport |
 
-`SYMAFL_RCNT_LIMIT` is parsed with `atoi` in reviewed code. Supply a
-non-negative decimal value; malformed or negative values lack robust validation.
+`SYMAFL_RCNT_LIMIT` is strictly parsed at mutator initialization. Values must
+be decimal integers from `0` through `255`; malformed, negative, and larger
+values fail initialization. The 8-bit bound matches the stored retry counter.
 
 ### AFL++ script controls and modes
 
@@ -119,6 +120,66 @@ change.
 
 The `pcbt` smoke script defaults `SYMAFL_RCNT_LIMIT` to `0` to reach the phase
 boundary quickly. It is not a research-quality screening setting.
+
+### XZ realworld pilot (v2)
+
+Use the local offline XZ source tree and seeds; do not fetch or substitute
+revisions. The file-input harness in `tests/targets/xz_target.c` is intentional:
+DFSan labels are bound to AFL's `OUT/default/.cur_input`, so the target must open
+the `@@` path rather than read stdin.
+
+```bash
+scripts/build-xz-benchmark.sh --clean
+scripts/eval-xz.sh --smoke
+FUZZ_SECONDS=30 scripts/eval-xz.sh all
+```
+
+Modes run **sequentially** under a fresh `/tmp` run directory:
+
+| Mode | Target launched by `afl-fuzz` | Extra configuration |
+|---|---|---|
+| `afl` | concrete XZ | no custom mutator |
+| `noscreen` | concolic XZ | mutator + `SYMAFL_NO_SCREEN=1` + dual targets + `TAINT_OPTIONS` |
+| `pcbt` | concolic XZ | mutator + dual targets + `TAINT_OPTIONS` (screening on) |
+
+Primary comparable metric for PCBT is **test throughput**:
+
+```text
+test_throughput = screened / elapsed_seconds
+                = (admitted + vetoed) / (last_update - start_time)
+```
+
+Each `post_process` decision is one test unit: either screen-only (veto, no
+target execution) or screen+execute (admit). This is the v2 analogue of
+"筛选+执行 / 时间". `scripts/collect-fuzz-metrics.py` reports it as
+`test_throughput_per_sec`.
+
+Secondary / diagnostic rates:
+
+| Metric | Formula | Meaning |
+|---|---|---|
+| AFL execution throughput | `execs_done / elapsed` | forkserver target runs only |
+| admit rate | `admitted / screened` | fraction of candidates that execute |
+| veto rate | `vetoed / screened` | fraction screened out before execution |
+
+Do not equate `admitted` with `execs_done`: the former is mutator post_process
+admits; the latter is AFL forkserver runs. Small deltas are expected around
+calibration, bootstrap, SIGINT boundaries, and non-fuzz `write_to_testcase`
+call sites. `admit_eval_failure` counts conservative admissions caused by a
+concrete interpreter failure such as a read beyond the candidate length. It is
+not a throughput numerator and, by contract, must never be converted into a
+direction-0 veto.
+
+A single 30-second run per mode is a pilot only; it is not statistical evidence
+of long-run coverage or throughput dominance.
+
+Build notes for the current XZ pilot:
+
+- `scripts/build-xz-benchmark.sh` configures liblzma with
+  `-DADDITIONAL_CHECK_TYPES=crc64` (no SHA256). SymSan's TaintPass currently
+  crashes while instrumenting `src/liblzma/check/sha256.c`.
+- Concolic liblzma uses `-O0 -fno-vectorize -fno-slp-vectorize` to reduce
+  vector-select warnings and TaintPass pressure; concrete uses `-O1`.
 
 ## Functional verification criteria
 
@@ -154,10 +215,14 @@ a repository snapshot.
 1. Cross-check each supported operation against an independent bit-vector oracle.
 2. Cover divide-by-zero, signed minimum divided by `-1`, shift at least width,
    extraction, concatenation, and short inputs.
-3. Use two disjoint predicates in one shared arena; make the earlier predicate
-   read beyond the candidate length while the later root remains evaluable.
-4. Put an unsupported predicate before a supported predicate and establish
-   whether run-global opacity is intended.
+3. Use two roots sharing a sub-DAG and verify that one candidate evaluation
+   reuses common PNode values without evaluating unrelated arena nodes.
+4. Make a predicate read beyond the candidate length and verify explicit
+   conservative admission, never a direction-0 veto.
+5. Put an unsupported predicate before a supported predicate and verify that
+   the failed root rolls back without making the later root opaque.
+6. Cover a >256-deep integer expression and direct <=8-byte `fmemcmp` versus
+   zero; reject a nonzero comparison of a `fmemcmp` result.
 
 **Protocol and lifecycle**
 
@@ -182,8 +247,8 @@ Use measurable outcomes rather than vague success language:
 
 - executions per second, screening latency, admitted/vetoed ratio, and coverage
   over time;
-- PCBT nodes, depth, conflicts, opaque predicates, replay consistency, and
-  saturation state;
+- PCBT topology nodes, predicate-arena nodes, depth, conflicts, opaque
+  predicates, replay consistency, and saturation state;
 - SHM captures, overflows, replay count, pipe bytes, and event count;
 - RSS and CPU utilization; and
 - unique crash stacks, minimized reproductions, and patch-regression PASS/FAIL.
@@ -191,8 +256,9 @@ Use measurable outcomes rather than vague success language:
 The mutator exposes:
 
 ```text
-traces nodes depth conflicts failed timeouts memerr screened admitted vetoed
-saturated selfcheck_fail single_pass single_pass_overflow
+traces nodes pred_nodes depth conflicts opaque failed timeouts memerr screened
+admitted vetoed saturated single_pass single_pass_overflow admit_empty
+admit_opaque admit_eval_failure admit_frontier veto_terminal veto_rlimit
 ```
 
 Interpret with these caveats:

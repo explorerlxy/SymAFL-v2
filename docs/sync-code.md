@@ -7,12 +7,12 @@ source-faithful implementation artifact for browser-side analysis, not a second
 system specification and not a substitute for the local worktree.
 
 ```text
-Snapshot: superproject main 313416fb874a25a3818df4797337f78cd9cdadef
+Snapshot: superproject main 5eff0b8 (dirty)
 AFLplusplus: main ef727c60875e17bac8400d0ec1025e6e856a21b8
-symsan: v2-dev 193cfd74f0bcdc575236cbc39c2832ecf8bb790f
-Generated: 2026-07-30
-Freshness: replaced summary-only anchors with 1779 verbatim source lines
-Status document: docs/status.md was already dirty before generation and is preserved unchanged
+symsan: v2-dev 193cfd74f0bcdc575236cbc39c2832ecf8bb790f (dirty)
+Generated: 2026-08-01
+Freshness: refreshed complete mutator, PCBT, and predicate excerpts after the PCBT storage refactor
+Status document: docs/status.md is dirty and records the current verification matrix
 ```
 
 ## Reading contract
@@ -139,7 +139,7 @@ transport arming, decoder state, full/suffix insertion, replay, queue callbacks,
 screening, saturation, and introspection all share state. It depends on the ABI
 above, pcbt.hpp below, and AFL++ declarations in afl-fuzz.h.
 
-**Provenance:** `symsan/driver/aflpp/symsan.cpp:1-626`; source lines: 626; included: 626; revision: `193cfd74f0bcdc575236cbc39c2832ecf8bb790f`; SHA-256: `ca9d52e4f65c97d55e25f043b6c99c7c1f0408dac813446609fdcb90421993d5`
+**Provenance:** `symsan/driver/aflpp/symsan.cpp:1-664`; source lines: 664; included: 664; revision: `v2-dev 193cfd74f0bcdc575236cbc39c2832ecf8bb790f (dirty worktree)`; SHA-256: `59e1d977536ee702b89c763fb75976d7ffc20ec633fdfe5c1adfcaa708c4f057`
 
 ```cpp
 /*
@@ -239,8 +239,8 @@ struct my_mutator_t {
 
   // screening state (post_process)
   bool screening = true;
-  uint32_t rlimit = 16;
-  pcbt::Node *last_node = nullptr;
+  uint8_t rlimit = 16;
+  pcbt::NodeRef last_node = pcbt::kUnexplored;
   uint8_t last_dir = 0;
   bool last_gained = true;
 
@@ -267,7 +267,10 @@ struct my_mutator_t {
   uint64_t vetoed = 0;
   uint64_t vetoes_since_admit = 0;
   bool saturation_logged = false;
-  uint64_t selfcheck_fail = 0;  // inserted input vetoed by its own tree
+  // After inserting a trace, re-run CheckInput on the same bytes. A correct
+  // insertion should close that path so CheckInput vetoes (returns false).
+  // selfcheck_fail counts the opposite: CheckInput still admits the input.
+  uint64_t selfcheck_fail = 0;
   uint64_t single_pass_captures = 0;
   uint64_t single_pass_overflows = 0;
 };
@@ -404,7 +407,12 @@ extern "C" my_mutator_t *afl_custom_init(afl_state *afl, unsigned int seed) {
     data->screening = false;
   }
   if (const char *rl = getenv("SYMAFL_RCNT_LIMIT")) {
-    data->rlimit = (uint32_t)atoi(rl);
+    char *end = nullptr;
+    unsigned long parsed = strtoul(rl, &end, 10);
+    if (end == rl || *end != '\0' || parsed > UINT8_MAX) {
+      FATAL("Invalid SYMAFL_RCNT_LIMIT=%s (expected 0..255)", rl);
+    }
+    data->rlimit = (uint8_t)parsed;
   }
   return data;
 }
@@ -412,13 +420,17 @@ extern "C" my_mutator_t *afl_custom_init(afl_state *afl, unsigned int seed) {
 extern "C" void afl_custom_deinit(my_mutator_t *data) {
   const pcbt::Tree &t = data->tree;
   fprintf(stderr,
-          "[pcbt] traces=%llu nodes=%llu depth=%llu conflicts=%llu "
-          "failed=%llu timeouts=%llu memerr=%llu screened=%llu "
+          "[pcbt] traces=%llu nodes=%llu pred_nodes=%llu depth=%llu conflicts=%llu "
+          "opaque=%llu failed=%llu timeouts=%llu memerr=%llu screened=%llu "
           "admitted=%llu vetoed=%llu saturated=%llu "
-          "selfcheck_fail=%llu single_pass=%llu single_pass_overflow=%llu\n",
+          "selfcheck_fail=%llu single_pass=%llu single_pass_overflow=%llu "
+          "admit_empty=%llu admit_opaque=%llu admit_frontier=%llu "
+          "veto_terminal=%llu veto_rlimit=%llu\n",
           (unsigned long long)t.num_traces, (unsigned long long)t.num_nodes,
+          (unsigned long long)t.num_pred_nodes(),
           (unsigned long long)t.max_depth,
           (unsigned long long)t.num_conflicts,
+          (unsigned long long)t.num_opaque,
           (unsigned long long)data->failed_runs,
           (unsigned long long)data->trace_timeouts,
           (unsigned long long)data->memerr_events,
@@ -428,7 +440,12 @@ extern "C" void afl_custom_deinit(my_mutator_t *data) {
           (unsigned long long)(data->screening ? 0 : 1),
           (unsigned long long)data->selfcheck_fail,
           (unsigned long long)data->single_pass_captures,
-          (unsigned long long)data->single_pass_overflows);
+          (unsigned long long)data->single_pass_overflows,
+          (unsigned long long)t.check_admit_empty,
+          (unsigned long long)t.check_admit_opaque,
+          (unsigned long long)t.check_admit_frontier,
+          (unsigned long long)t.check_veto_terminal,
+          (unsigned long long)t.check_veto_rlimit);
   delete data;
 }
 
@@ -450,13 +467,13 @@ static void arm_full_capture(my_mutator_t *data) {
   data->single_pass_armed = true;
 }
 
-static void arm_suffix_capture(my_mutator_t *data, pcbt::Node *node,
+static void arm_suffix_capture(my_mutator_t *data, pcbt::NodeRef node,
                                uint8_t dir) {
   symafl_single_pass_control *control = data->single_pass_control;
   __atomic_store_n(&control->event_count, 0, __ATOMIC_RELAXED);
   __atomic_store_n(&control->overflow, 0, __ATOMIC_RELAXED);
   __atomic_store_n(&control->armed, 0, __ATOMIC_RELAXED);
-  control->skip_depth = node->depth;
+  control->skip_depth = data->tree.depth(node);
   __atomic_store_n(&control->mode, SYMAFL_TRACE_SUFFIX_SHM, __ATOMIC_RELEASE);
   __atomic_store_n(&control->armed, 1, __ATOMIC_RELEASE);
   data->last_node = node;
@@ -464,13 +481,13 @@ static void arm_suffix_capture(my_mutator_t *data, pcbt::Node *node,
   data->single_pass_armed = true;
 }
 
-static void arm_pipe_suffix_capture(my_mutator_t *data, pcbt::Node *node,
+static void arm_pipe_suffix_capture(my_mutator_t *data, pcbt::NodeRef node,
                                     uint8_t dir) {
   symafl_single_pass_control *control = data->single_pass_control;
   __atomic_store_n(&control->event_count, 0, __ATOMIC_RELAXED);
   __atomic_store_n(&control->overflow, 0, __ATOMIC_RELAXED);
   __atomic_store_n(&control->armed, 0, __ATOMIC_RELAXED);
-  control->skip_depth = node->depth;
+  control->skip_depth = data->tree.depth(node);
   __atomic_store_n(&control->mode, SYMAFL_TRACE_SUFFIX_PIPE,
                    __ATOMIC_RELEASE);
   __atomic_store_n(&control->armed, 1, __ATOMIC_RELEASE);
@@ -510,8 +527,12 @@ static bool decode_full_stream(const u8 *wire, size_t wire_size,
 
 static void selfcheck(my_mutator_t *data, const u8 *buf, size_t buf_size) {
   if (!buf || !buf_size) return;
-  pcbt::Node *node = nullptr;
+  pcbt::NodeRef node = pcbt::kUnexplored;
   uint8_t dir = 0;
+  // Fail when the just-inserted input is still admitted. Expected success is
+  // CheckInput == false (path ends at a terminal edge). Remaining admits are
+  // usually opaque predicates, concrete re-eval vs symbolic-path divergence,
+  // or the short-input d=0 evaluation rule.
   if (data->tree.CheckInput(buf, (uint32_t)buf_size, &node, &dir,
                             data->rlimit)) {
     data->selfcheck_fail += 1;
@@ -553,7 +574,9 @@ static bool insert_full_stream(my_mutator_t *data, const u8 *buf,
 
 static bool insert_pipe_suffix_capture(my_mutator_t *data, const u8 *buf,
                                        size_t buf_size, const char *fname) {
-  if (!data->single_pass_armed || !data->last_node) return false;
+  if (!data->single_pass_armed || data->last_node == pcbt::kUnexplored) {
+    return false;
+  }
   std::vector<pcbt::Event> events;
   events.reserve(4096);
   if (!decode_pipe_events(data, &events, fname)) {
@@ -564,7 +587,7 @@ static bool insert_pipe_suffix_capture(my_mutator_t *data, const u8 *buf,
       events, __dfsan_label_info, MAX_LABEL);
   fprintf(stderr,
           "[pcbt-trace] %s mode=pipe-suffix skip=%u events=%zu created=%u\n",
-          fname, data->last_node->depth, events.size(), created);
+          fname, data->tree.depth(data->last_node), events.size(), created);
   disarm_capture(data);
   selfcheck(data, buf, buf_size);
   return true;
@@ -572,7 +595,9 @@ static bool insert_pipe_suffix_capture(my_mutator_t *data, const u8 *buf,
 
 static bool insert_suffix_capture(my_mutator_t *data, const u8 *buf,
                                   size_t buf_size, const char *fname) {
-  if (!data->single_pass_armed || !data->last_node) return false;
+  if (!data->single_pass_armed || data->last_node == pcbt::kUnexplored) {
+    return false;
+  }
   symafl_single_pass_control *control = data->single_pass_control;
   uint32_t count = __atomic_load_n(&control->event_count, __ATOMIC_ACQUIRE);
   bool overflow = __atomic_load_n(&control->overflow, __ATOMIC_ACQUIRE) ||
@@ -599,7 +624,7 @@ static bool insert_suffix_capture(my_mutator_t *data, const u8 *buf,
   data->single_pass_captures += 1;
   fprintf(stderr,
           "[pcbt-trace] %s mode=suffix skip=%u events=%zu created=%u\n",
-          fname, data->last_node->depth, events.size(), created);
+          fname, data->tree.depth(data->last_node), events.size(), created);
   disarm_capture(data);
   selfcheck(data, buf, buf_size);
   return true;
@@ -607,7 +632,7 @@ static bool insert_suffix_capture(my_mutator_t *data, const u8 *buf,
 
 static bool replay_pipe_suffix(my_mutator_t *data, const u8 *buf,
                                size_t buf_size, const char *fname,
-                               pcbt::Node *node, uint8_t dir) {
+                               pcbt::NodeRef node, uint8_t dir) {
   arm_pipe_suffix_capture(data, node, dir);
   afl_fsrv_write_to_testcase(&data->afl->fsrv, const_cast<u8 *>(buf), buf_size);
   fsrv_run_result_t result = afl_fsrv_run_target(&data->afl->fsrv,
@@ -639,12 +664,13 @@ extern "C" void afl_custom_post_run(my_mutator_t *data) {
   if (data->bootstrap_done || !data->single_pass_armed) return;
   uint32_t mode = __atomic_load_n(&data->single_pass_control->mode,
                                   __ATOMIC_ACQUIRE);
-  if (mode == SYMAFL_TRACE_SUFFIX_SHM && data->last_node) {
+  if (mode == SYMAFL_TRACE_SUFFIX_SHM &&
+      data->last_node != pcbt::kUnexplored) {
     (void)insert_suffix_capture(data, nullptr, 0, "bootstrap");
   } else if (mode == SYMAFL_TRACE_FULL_STREAM) {
     (void)insert_full_stream(data, nullptr, 0, "bootstrap");
   }
-  data->last_node = nullptr;
+  data->last_node = pcbt::kUnexplored;
 }
 
 extern "C" u8 afl_custom_queue_get(my_mutator_t *data, const u8 *filename) {
@@ -667,7 +693,7 @@ extern "C" u8 afl_custom_queue_new_entry(my_mutator_t *data,
   }
   uint32_t mode = __atomic_load_n(&data->single_pass_control->mode,
                                   __ATOMIC_ACQUIRE);
-  pcbt::Node *node = data->last_node;
+  pcbt::NodeRef node = data->last_node;
   uint8_t dir = data->last_dir;
   bool inserted = mode == SYMAFL_TRACE_SUFFIX_SHM
       ? insert_suffix_capture(data, buf.data(), buf.size(), fname)
@@ -676,7 +702,7 @@ extern "C" u8 afl_custom_queue_new_entry(my_mutator_t *data,
             : mode == SYMAFL_TRACE_FULL_STREAM
                   ? insert_full_stream(data, buf.data(), buf.size(), fname)
                   : false;
-  if (!inserted && node) {
+  if (!inserted && node != pcbt::kUnexplored) {
     (void)replay_pipe_suffix(data, buf.data(), buf.size(), fname, node, dir);
   }
   data->last_gained = true;
@@ -690,12 +716,15 @@ extern "C" u8 afl_custom_queue_new_entry(my_mutator_t *data,
 extern "C" size_t afl_custom_post_process(my_mutator_t *data, u8 *buf,
                                           size_t buf_size, u8 **out_buf) {
   // rCnt bookkeeping for the previously admitted candidate
-  if (data->last_node) {
-    if (!data->last_gained) data->last_node->rCnt[data->last_dir] += 1;
+  if (data->last_node != pcbt::kUnexplored) {
+    if (!data->last_gained) {
+      uint8_t &count = data->tree.retry_count(data->last_node, data->last_dir);
+      if (count != UINT8_MAX) count += 1;
+    }
     if (data->single_pass_armed) {
       disarm_capture(data);
     }
-    data->last_node = nullptr;
+    data->last_node = pcbt::kUnexplored;
   }
 
   if (!data->screening) {
@@ -704,7 +733,7 @@ extern "C" size_t afl_custom_post_process(my_mutator_t *data, u8 *buf,
   }
 
   data->screened += 1;
-  pcbt::Node *node = nullptr;
+  pcbt::NodeRef node = pcbt::kUnexplored;
   uint8_t dir = 0;
   if (data->tree.CheckInput(buf, (uint32_t)buf_size, &node, &dir,
                             data->rlimit)) {
@@ -715,7 +744,7 @@ extern "C" size_t afl_custom_post_process(my_mutator_t *data, u8 *buf,
     // pipe-full. Thereafter a candidate has an established frontier and uses
     // SHM. The pipe is reserved for data that is known to be consumed: the
     // bootstrap trace or an overflow replay after AFL++ confirms a gain.
-    if (!data->bootstrap_done || !node) {
+    if (!data->bootstrap_done || node == pcbt::kUnexplored) {
       data->last_node = node;
       data->last_dir = dir;
       arm_full_capture(data);
@@ -746,16 +775,20 @@ extern "C" size_t afl_custom_post_process(my_mutator_t *data, u8 *buf,
 }
 
 extern "C" const char *afl_custom_introspection(my_mutator_t *data) {
-  static char buf[512];
+  static char buf[768];
   const pcbt::Tree &t = data->tree;
   snprintf(buf, sizeof(buf),
-           "traces=%llu nodes=%llu depth=%llu conflicts=%llu "
+           "traces=%llu nodes=%llu pred_nodes=%llu depth=%llu conflicts=%llu opaque=%llu "
            "failed=%llu timeouts=%llu memerr=%llu "
            "screened=%llu admitted=%llu vetoed=%llu saturated=%llu "
-           "selfcheck_fail=%llu single_pass=%llu single_pass_overflow=%llu",
+           "selfcheck_fail=%llu single_pass=%llu single_pass_overflow=%llu "
+           "admit_empty=%llu admit_opaque=%llu admit_frontier=%llu "
+           "veto_terminal=%llu veto_rlimit=%llu",
            (unsigned long long)t.num_traces, (unsigned long long)t.num_nodes,
+           (unsigned long long)t.num_pred_nodes(),
            (unsigned long long)t.max_depth,
            (unsigned long long)t.num_conflicts,
+           (unsigned long long)t.num_opaque,
            (unsigned long long)data->failed_runs,
            (unsigned long long)data->trace_timeouts,
            (unsigned long long)data->memerr_events,
@@ -765,45 +798,38 @@ extern "C" const char *afl_custom_introspection(my_mutator_t *data) {
            (unsigned long long)(data->screening ? 0 : 1),
            (unsigned long long)data->selfcheck_fail,
            (unsigned long long)data->single_pass_captures,
-           (unsigned long long)data->single_pass_overflows);
+           (unsigned long long)data->single_pass_overflows,
+           (unsigned long long)t.check_admit_empty,
+           (unsigned long long)t.check_admit_opaque,
+           (unsigned long long)t.check_admit_frontier,
+           (unsigned long long)t.check_veto_terminal,
+           (unsigned long long)t.check_veto_rlimit);
   return buf;
 }
 ```
 
 ## 3. Complete PCBT representation and algorithms
 
-The following header and source must be analyzed together. In particular,
-InsertSuffix deliberately trusts its caller's frontier-prefix proof; CheckInput
-chooses direction zero when evaluation fails; and saturation treats opaque
-predicates as unsaturated. These are current engineering properties, not claims
-upgraded by this digest.
+The following header and source must be analyzed together. Nodes use compact
+32-bit NodeRef child references: 0 is unexplored, 1 is the global terminal
+node, and 2 is the virtual root. InsertSuffix deliberately retains its
+caller-owned frontier-prefix invariant; CheckInput still chooses direction zero
+when evaluation fails; saturation treats opaque predicates as unsaturated.
 
 ### pcbt.hpp
 
-**Provenance:** `symsan/driver/aflpp/pcbt.hpp:1-95`; source lines: 95; included: 95; revision: `193cfd74f0bcdc575236cbc39c2832ecf8bb790f`; SHA-256: `664f3272c5fc207dde301c1167b6d673b0221b05be13d5951fdcc1d51ad8d6c2`
+**Provenance:** `symsan/driver/aflpp/pcbt.hpp:1-90`; source lines: 90; included: 90; revision: `v2-dev 193cfd74f0bcdc575236cbc39c2832ecf8bb790f (dirty worktree)`; SHA-256: `28f2baa1e3b4b47651cf47ae0476ab92047a28d78c94b8c7dad5f0bef6798b54`
 
 ```cpp
 // Path Constraint Binary Tree (PCBT) for SymAFL v2.
 //
-// A binary decision trie over symbolic-branch outcomes. Node N represents
-// one branch decision point (compile-time id `cid`, predicate over input
-// bytes); N->child[d] is the next decision node observed after outcome d.
-// The virtual root's child[0] is the entry slot: the first symbolic branch
-// of the program (deterministic targets always reach the same first
-// symbolic branch, so all traces enter through one node).
-//
-// An edge is either unexplored, points at the next symbolic node, or is a
-// terminal edge: it has been observed to complete without another symbolic
-// condition. `child[d] == nullptr && terminal[d]` denotes the latter.
-//
-// CheckInput: walk from the root evaluating each node's predicate against
-// the candidate's bytes; the first missing child on the evaluated
-// direction is a frontier — the candidate is admitted unless that
-// direction's low-value counter (rCnt) is saturated.
+// A binary decision trie over symbolic-branch outcomes. Nodes live in a
+// contiguous Tree-owned arena and refer to children by 32-bit NodeRef values:
+// 0 is unexplored and 1 is the single global terminal node. The virtual root
+// has no predicate; root.child[0] is the entry slot for the first condition.
 #pragma once
 
 #include <cstdint>
-#include <memory>
 #include <vector>
 
 #include "dfsan/dfsan.h"
@@ -811,14 +837,17 @@ upgraded by this digest.
 
 namespace pcbt {
 
+using NodeRef = uint32_t;
+constexpr NodeRef kUnexplored = 0;
+constexpr NodeRef kTerminal = 1;
+constexpr NodeRef kRoot = 2;
+
 struct Node {
-  uint32_t cid = 0;                     // compile-time branch id
-  Predicate pred;                       // branch predicate (arena view)
-  Node *child[2] = {nullptr, nullptr};  // child[d]: next decision after d
-  bool terminal[2] = {false, false};    // explored edge with no next node
-  uint32_t rCnt[2] = {0, 0};            // non-gaining admissions per direction
-  uint32_t id = 0;                      // stable node id
-  uint32_t depth = 0;                   // symbolic depth; root's children = 1
+  uint32_t cid = 0;  // compile-time branch id
+  Predicate pred;    // root view into Tree::pred_arena_
+  NodeRef child[2] = {kUnexplored, kUnexplored};
+  uint32_t depth = 0;                // root's children = 1
+  uint8_t rCnt[2] = {0, 0};          // non-gaining admissions per direction
 };
 
 struct Event {
@@ -829,37 +858,33 @@ struct Event {
 
 class Tree {
  public:
-  Tree() = default;
+  Tree();
 
   // Insert one full branch-event path. The union table must still hold this
-  // run's content (predicates are materialized inline). Returns the number
-  // of new nodes created (0 = nothing new / conflict / failure).
+  // run's content. Returns the number of new topology nodes created.
   uint32_t InsertTrace(const std::vector<Event> &events,
                        const dfsan_label_info *table,
                        size_t table_labels);
 
-  // Insert the event suffix known to follow parent->child[direction]. The
-  // caller has already established the PCBT prefix during screening, so this
-  // performs no root replay or prefix matching. An empty suffix marks that
-  // edge terminal.
-  uint32_t InsertSuffix(Node *parent, uint8_t direction,
+  // Insert the suffix known to follow parent.child[direction]. The caller has
+  // already established the PCBT prefix during screening, so this performs no
+  // root replay or prefix matching. An empty suffix records the terminal node.
+  uint32_t InsertSuffix(NodeRef parent, uint8_t direction,
                         const std::vector<Event> &events,
                         const dfsan_label_info *table, size_t table_labels);
 
-  // Screen a candidate. Returns true to admit; on admission *out_node /
-  // *out_dir identify the frontier (for rCnt bookkeeping and suffix skip
-  // depth via Node::depth). Terminal edges are already explored and vetoed.
-  // rlimit is the maximum non-gaining admissions per frontier direction.
-  bool CheckInput(const uint8_t *input, uint32_t len, Node **out_node,
-                  uint8_t *out_dir, uint32_t rlimit);
+  // Screen a candidate. On admission, *out_node / *out_dir identify an
+  // unexplored frontier for retry bookkeeping and suffix skip depth. Terminal
+  // edges are already explored and vetoed.
+  bool CheckInput(const uint8_t *input, uint32_t len, NodeRef *out_node,
+                  uint8_t *out_dir, uint8_t rlimit);
 
-  // True when every evaluable path through the current tree ends at an
-  // explored edge or an rCnt-pruned frontier. Opaque predicates deliberately
-  // keep screening alive: their inputs must remain conservatively admitted.
-  bool IsSaturated(uint32_t rlimit) const;
-
-  const Node *root() const { return &root_; }
-  Node *root() { return &root_; }
+  bool IsSaturated(uint8_t rlimit) const;
+  uint32_t depth(NodeRef ref) const { return node(ref).depth; }
+  uint64_t num_pred_nodes() const { return pred_arena_.nodes.size(); }
+  uint8_t &retry_count(NodeRef ref, uint8_t direction) {
+    return node(ref).rCnt[direction];
+  }
 
   // stats
   uint64_t num_nodes = 0;
@@ -868,13 +893,21 @@ class Tree {
   uint64_t num_conflicts = 0;
   uint64_t num_opaque = 0;
   uint64_t max_depth = 0;
+  uint64_t check_admit_empty = 0;
+  uint64_t check_admit_opaque = 0;
+  uint64_t check_admit_frontier = 0;
+  uint64_t check_veto_terminal = 0;
+  uint64_t check_veto_rlimit = 0;
 
  private:
-  Node root_;  // virtual root: no predicate; child[0] = entry slot
-  std::vector<std::unique_ptr<Node>> arena_;
-  uint32_t next_id_ = 1;
+  Node &node(NodeRef ref) { return nodes_[ref]; }
+  const Node &node(NodeRef ref) const { return nodes_[ref]; }
+  NodeRef append(Node &&node);
+  bool IsSaturated(NodeRef ref, uint8_t rlimit) const;
 
-  bool IsSaturated(const Node *node, uint32_t rlimit) const;
+  // Index 1 is a global terminal node; index 2 is the virtual root.
+  std::vector<Node> nodes_;
+  PredArena pred_arena_;
 };
 
 }  // namespace pcbt
@@ -882,12 +915,22 @@ class Tree {
 
 ### pcbt.cpp
 
-**Provenance:** `symsan/driver/aflpp/pcbt.cpp:1-174`; source lines: 174; included: 174; revision: `193cfd74f0bcdc575236cbc39c2832ecf8bb790f`; SHA-256: `2df3cc58504d1a1ddbe57df2d6490ed14dfaa965b1fa7c468bb1fea649e5fc24`
+**Provenance:** `symsan/driver/aflpp/pcbt.cpp:1-168`; source lines: 168; included: 168; revision: `v2-dev 193cfd74f0bcdc575236cbc39c2832ecf8bb790f (dirty worktree)`; SHA-256: `4ef3bb30a23c8bdeeee2d9ed7c9260428e89b520191793821f6d383d2d7a78ac`
 
 ```cpp
 #include "pcbt.hpp"
 
 namespace pcbt {
+
+Tree::Tree() : nodes_(kRoot + 1) {
+  pred_arena_.nodes.reserve(4096);
+}
+
+NodeRef Tree::append(Node &&new_node) {
+  if (nodes_.size() == UINT32_MAX) return kUnexplored;
+  nodes_.push_back(std::move(new_node));
+  return (NodeRef)nodes_.size() - 1;
+}
 
 uint32_t Tree::InsertTrace(const std::vector<Event> &events,
                            const dfsan_label_info *table,
@@ -896,164 +939,148 @@ uint32_t Tree::InsertTrace(const std::vector<Event> &events,
   num_traces += 1;
   num_events += events.size();
 
-  Node *parent = &root_;
-  uint8_t dir = 0;  // entry slot: the first decision node is root_.child[0]
-  uint64_t depth = 0;
-
-  // Walk the existing trie; stop at the first missing child (insert point)
-  // or bail out on a path conflict (cid mismatch at an existing node).
+  NodeRef parent = kRoot;
+  uint8_t dir = 0;
+  uint64_t trace_depth = 0;
   size_t i = 0;
-  for (; i < events.size(); i++) {
-    Node *nxt = parent->child[dir];
-    if (!nxt) {
-      if (parent->terminal[dir]) {
-        num_conflicts += 1;
-        return 0;
-      }
-      break;
-    }
-    if (nxt->cid != events[i].cid) {
+  for (; i < events.size(); ++i) {
+    NodeRef next = node(parent).child[dir];
+    if (next == kUnexplored) break;
+    if (next == kTerminal || node(next).cid != events[i].cid) {
       num_conflicts += 1;
       return 0;
     }
-    parent = nxt;
+    parent = next;
     dir = events[i].result ? 1 : 0;
-    depth += 1;
+    trace_depth += 1;
   }
 
-  // A complete replay that ends after an already-known node has explored its
-  // outgoing edge. If the edge already has a successor, preserve that richer
-  // path; deterministic targets do not produce both forms for one edge.
   if (i == events.size()) {
-    if (!parent->child[dir]) parent->terminal[dir] = true;
+    if (node(parent).child[dir] == kUnexplored) {
+      node(parent).child[dir] = kTerminal;
+    }
     return 0;
   }
 
-  // Append the remaining events as a fresh chain. All new predicates of
-  // this trace share one arena (maximal DAG reuse via label memoization).
-  RunConverter conv(table, table_labels);
+  RunConverter conv(table, table_labels, &pred_arena_);
   uint32_t created = 0;
-  for (; i < events.size(); i++) {
-    auto node = std::make_unique<Node>();
-    node->cid = events[i].cid;
-    node->id = next_id_++;
-    node->depth = parent == &root_ ? 1 : parent->depth + 1;
-    node->pred = conv.conv(events[i].label);
-    if (node->pred.opaque) num_opaque += 1;
-    Node *raw = node.get();
-    arena_.push_back(std::move(node));
-    parent->child[dir] = raw;
-    parent->terminal[dir] = false;
-    parent = raw;
+  for (; i < events.size(); ++i) {
+    Node new_node;
+    new_node.cid = events[i].cid;
+    new_node.depth = parent == kRoot ? 1 : node(parent).depth + 1;
+    new_node.pred = conv.conv(events[i].label);
+    if (new_node.pred.opaque) num_opaque += 1;
+    NodeRef next = append(std::move(new_node));
+    if (next == kUnexplored) return created;
+    node(parent).child[dir] = next;
+    parent = next;
     dir = events[i].result ? 1 : 0;
     created += 1;
-    depth += 1;
+    trace_depth += 1;
   }
 
-  // The replay completed after the final symbolic condition. Record that its
-  // selected edge is explored even though it has no next symbolic node.
-  parent->terminal[dir] = true;
-
+  node(parent).child[dir] = kTerminal;
   num_nodes += created;
-  if (depth > max_depth) max_depth = depth;
+  if (trace_depth > max_depth) max_depth = trace_depth;
   return created;
 }
 
-uint32_t Tree::InsertSuffix(Node *parent, uint8_t direction,
+uint32_t Tree::InsertSuffix(NodeRef parent, uint8_t direction,
                             const std::vector<Event> &events,
                             const dfsan_label_info *table,
                             size_t table_labels) {
-  if (!parent || direction > 1) return 0;
-
+  if (parent < kRoot || parent >= nodes_.size() || direction > 1) return 0;
   num_traces += 1;
   num_events += events.size();
 
-  // The caller owns the PCBT-prefix invariant. Do not replay or validate that
-  // prefix here: suffix insertion is the direct equivalent of InsertTrace.
   if (events.empty()) {
-    parent->terminal[direction] = true;
+    node(parent).child[direction] = kTerminal;
     return 0;
   }
 
-  RunConverter conv(table, table_labels);
+  RunConverter conv(table, table_labels, &pred_arena_);
   uint32_t created = 0;
   uint8_t dir = direction;
-  Node *cur = parent;
+  NodeRef cur = parent;
   for (const Event &event : events) {
-    auto node = std::make_unique<Node>();
-    node->cid = event.cid;
-    node->id = next_id_++;
-    node->depth = cur->depth + 1;
-    node->pred = conv.conv(event.label);
-    if (node->pred.opaque) num_opaque += 1;
-    Node *raw = node.get();
-    arena_.push_back(std::move(node));
-    cur->child[dir] = raw;
-    cur->terminal[dir] = false;
-    cur = raw;
+    Node new_node;
+    new_node.cid = event.cid;
+    new_node.depth = node(cur).depth + 1;
+    new_node.pred = conv.conv(event.label);
+    if (new_node.pred.opaque) num_opaque += 1;
+    NodeRef next = append(std::move(new_node));
+    if (next == kUnexplored) return created;
+    node(cur).child[dir] = next;
+    cur = next;
     dir = event.result ? 1 : 0;
     created += 1;
   }
 
-  cur->terminal[dir] = true;
+  node(cur).child[dir] = kTerminal;
   num_nodes += created;
-  if (cur->depth > max_depth) max_depth = cur->depth;
+  if (node(cur).depth > max_depth) max_depth = node(cur).depth;
   return created;
 }
 
-bool Tree::CheckInput(const uint8_t *input, uint32_t len, Node **out_node,
-                      uint8_t *out_dir, uint32_t rlimit) {
-  Node *cur = root_.child[0];
-  if (!cur) {
-    *out_node = nullptr;  // empty tree (bootstrap): admit all, no bookkeeping
+bool Tree::CheckInput(const uint8_t *input, uint32_t len, NodeRef *out_node,
+                      uint8_t *out_dir, uint8_t rlimit) {
+  NodeRef cur = node(kRoot).child[0];
+  if (cur == kUnexplored) {
+    *out_node = kUnexplored;
     *out_dir = 0;
+    check_admit_empty += 1;
     return true;
   }
 
   while (true) {
-    uint8_t d;
-    if (!cur->pred.arena || cur->pred.opaque) {
-      // cannot evaluate this node: conservative admit (no bookkeeping)
-      *out_node = nullptr;
+    const Node &current = node(cur);
+    if (current.pred.opaque) {
+      *out_node = kUnexplored;
       *out_dir = 0;
+      check_admit_opaque += 1;
       return true;
     }
     uint64_t v = 0;
-    if (!eval_predicate(cur->pred, input, len, &v)) {
-      d = 0;  // undefined (read past input end): v1's conservative rule
-    } else {
-      d = v ? 1 : 0;
+    uint8_t dir = eval_predicate(pred_arena_, current.pred, input, len, &v)
+                      ? (v ? 1 : 0)
+                      : 0;
+    NodeRef next = current.child[dir];
+    if (next == kTerminal) {
+      *out_node = kUnexplored;
+      *out_dir = 0;
+      check_veto_terminal += 1;
+      return false;
     }
-    Node *nxt = cur->child[d];
-    if (!nxt) {
-      if (cur->terminal[d]) {
-        *out_node = nullptr;
-        *out_dir = 0;
-        return false;
-      }
-      // frontier in direction d
+    if (next == kUnexplored) {
       *out_node = cur;
-      *out_dir = d;
-      return cur->rCnt[d] < rlimit;
+      *out_dir = dir;
+      if (current.rCnt[dir] < rlimit) {
+        check_admit_frontier += 1;
+        return true;
+      }
+      check_veto_rlimit += 1;
+      return false;
     }
-    cur = nxt;
+    cur = next;
   }
 }
 
-bool Tree::IsSaturated(uint32_t rlimit) const {
-  return root_.child[0] && IsSaturated(root_.child[0], rlimit);
+bool Tree::IsSaturated(uint8_t rlimit) const {
+  NodeRef entry = node(kRoot).child[0];
+  return entry != kUnexplored && IsSaturated(entry, rlimit);
 }
 
-bool Tree::IsSaturated(const Node *node, uint32_t rlimit) const {
-  if (!node || !node->pred.arena || node->pred.opaque) return false;
-
+bool Tree::IsSaturated(NodeRef ref, uint8_t rlimit) const {
+  const Node &current = node(ref);
+  if (current.pred.opaque) return false;
   for (uint8_t direction = 0; direction != 2; ++direction) {
-    const Node *next = node->child[direction];
-    if (next) {
-      if (!IsSaturated(next, rlimit)) return false;
-    } else if (!node->terminal[direction] && node->rCnt[direction] < rlimit) {
-      return false;
+    NodeRef next = current.child[direction];
+    if (next == kTerminal) continue;
+    if (next == kUnexplored) {
+      if (current.rCnt[direction] < rlimit) return false;
+      continue;
     }
+    if (!IsSaturated(next, rlimit)) return false;
   }
   return true;
 }
@@ -1063,23 +1090,23 @@ bool Tree::IsSaturated(const Node *node, uint32_t rlimit) const {
 
 ## 4. Complete predicate representation, conversion, and interpreter
 
-The converter builds a shared arena per traced run. The full implementation is
-included because the documented opacity and shared-arena issues depend on the
-exact conversion and evaluation order, including all supported bit-vector
-operators and their boundary cases.
+The Tree owns one shared predicate arena. RunConverter keeps a per-traced-run
+label memo and rolls back a failed root conversion without poisoning later
+roots. The interpreter starts at the requested root and uses an iterative
+post-order sparse evaluation scratch, so unrelated arena prefixes are not
+evaluated.
 
 ### pred.hpp
 
-**Provenance:** `symsan/driver/aflpp/pred.hpp:1-102`; source lines: 102; included: 102; revision: `193cfd74f0bcdc575236cbc39c2832ecf8bb790f`; SHA-256: `53e620a89d04f398f820d9a101399fc94e450eb9b6fd235eac129f0855f87f89`
+**Provenance:** `symsan/driver/aflpp/pred.hpp:1-95`; source lines: 95; included: 95; revision: `v2-dev 193cfd74f0bcdc575236cbc39c2832ecf8bb790f (dirty worktree)`; SHA-256: `6d1e3204190af9912b4106279ad19c8f60ce936dc9be1200ae44d747f87e9b45`
 
 ```cpp
 // Self-contained branch predicates for SymAFL v2 PCBT screening.
 //
-// RunConverter converts the SymSan union-table ASTs of ONE traced run into
-// a single shared PredArena (post-order PNode array, one conversion per
-// union-table label — the table is hash-consed, so sharing is maximal).
-// A Predicate is (arena, root index) — cheap to store per tree node, no
-// per-predicate copies of shared subexpressions.
+// Tree owns one PredArena for its lifetime. RunConverter converts one traced
+// run into that shared post-order PNode array and memoizes only that run's
+// union-table labels. A Predicate is a root index into the tree arena, so
+// nodes do not retain a per-trace shared_ptr or duplicate expression views.
 //
 // Integer bit-vector ops only; FP/string/gep subtrees are marked opaque —
 // screening treats an opaque node as "cannot decide -> admit".
@@ -1090,7 +1117,6 @@ operators and their boundary cases.
 #pragma once
 
 #include <cstdint>
-#include <memory>
 #include <unordered_map>
 #include <vector>
 
@@ -1100,7 +1126,7 @@ namespace pcbt {
 
 enum class PKind : uint8_t {
   Opaque = 0,
-  Read,   // input bytes: value=byte offset, aux=nbytes (little-endian)
+  Read,   // input bytes: value=byte offset, nbytes=bits/8 (little-endian)
   Const,  // value=constant (masked to bits)
   Add, Sub, Mul, UDiv, SDiv, URem, SRem, Neg,
   Not, And, Or, Xor, Shl, LShr, AShr,
@@ -1109,21 +1135,18 @@ enum class PKind : uint8_t {
 };
 
 struct PNode {
-  PKind kind;
-  uint16_t bits;       // result width in bits; for comparisons: operand width
+  uint64_t value;      // Const: value; Read: byte offset; Extract: bit offset
   uint32_t a;          // left/only child index (UINT32_MAX = none)
   uint32_t b;          // right child index (UINT32_MAX = none)
-  uint64_t value;      // Const: value; Read: byte offset; Extract: bit offset
-  uint32_t aux;        // Read: nbytes
+  uint8_t bits;        // result width in bits; for comparisons: operand width
+  PKind kind;
 };
 
 struct PredArena {
   std::vector<PNode> nodes;  // post-order by label (children before parents)
 };
-using ArenaPtr = std::shared_ptr<PredArena>;
 
 struct Predicate {
-  ArenaPtr arena;
   uint32_t root = 0;
   bool opaque = false;
   // input-read set of this predicate: sorted unique (offset, nbytes) pairs
@@ -1138,48 +1161,46 @@ struct Predicate {
   }
 };
 
-// Converts the union-table ASTs of one traced run into one shared arena.
-// Create once per traced run; call conv() per branch label (memoized
-// across calls). Labels are topologically ordered (child < parent), so
-// each label is converted at most once per run.
+// Converts one traced run into the Tree-owned arena. Create once per trace;
+// call conv() per branch label. A failed root conversion does not make later
+// labels opaque.
 class RunConverter {
  public:
-  RunConverter(const dfsan_label_info *table, size_t table_labels);
+  RunConverter(const dfsan_label_info *table, size_t table_labels,
+               PredArena *arena);
   // Convert the subtree at `label`; returns a Predicate view into the
   // shared arena (possibly marked opaque).
   Predicate conv(uint32_t label);
-  ArenaPtr arena() const { return arena_; }
-
  private:
   const dfsan_label_info *table_;
   size_t table_labels_;
-  ArenaPtr arena_;
+  PredArena *arena_;
+  size_t run_start_;
   std::unordered_map<uint32_t, uint32_t> label_map_;  // label -> arena index
-  bool overflow_ = false;
+  std::vector<uint32_t> inserted_labels_;
 
   uint32_t convert(uint32_t label, size_t depth);
   uint32_t convert_op(const dfsan_label_info *info, uint32_t op,
                       uint32_t op_lo, size_t depth);
   uint32_t add(PKind kind, uint16_t bits, uint32_t a, uint32_t b,
-               uint64_t value = 0, uint32_t aux = 0);
+               uint64_t value = 0);
   uint32_t add_const(uint64_t value, uint16_t bits);
   uint32_t conv_child(uint32_t label, uint64_t cval, uint16_t cbits,
                       size_t depth);
-  void collect_reads(uint32_t root, Predicate &pred);
 };
 
-// Evaluate a predicate against a concrete input. Returns false on undefined
-// evaluation (read past input end); on success returns true and sets *out
-// to the root value (0/1 for comparison roots).
-bool eval_predicate(const Predicate &pred, const uint8_t *input, uint32_t len,
-                    uint64_t *out);
+// Evaluate only the root-reachable DAG against a concrete input. Returns false
+// on undefined evaluation (read past input end); on success sets *out to the
+// root value (0/1 for comparison roots).
+bool eval_predicate(const PredArena &arena, const Predicate &pred,
+                    const uint8_t *input, uint32_t len, uint64_t *out);
 
 }  // namespace pcbt
 ```
 
 ### pred.cpp
 
-**Provenance:** `symsan/driver/aflpp/pred.cpp:1-317`; source lines: 317; included: 317; revision: `193cfd74f0bcdc575236cbc39c2832ecf8bb790f`; SHA-256: `81b19f64db472236230b6112a938967e8e483d5153233b8c75f14b58e5a839b1`
+**Provenance:** `symsan/driver/aflpp/pred.cpp:1-350`; source lines: 350; included: 350; revision: `v2-dev 193cfd74f0bcdc575236cbc39c2832ecf8bb790f (dirty worktree)`; SHA-256: `f9a93cade71c1d57abb0ff1fa61e7c3d85d15bef621e7e4c66ff6da7b656f6e8`
 
 ```cpp
 #include "pred.hpp"
@@ -1194,28 +1215,43 @@ namespace pcbt {
 
 namespace {
 constexpr uint32_t kNoChild = UINT32_MAX;
-constexpr size_t kMaxArenaNodes = 2'000'000;  // per-run cap
-constexpr size_t kMaxDepth = 256;             // recursion cap -> opaque
+constexpr uint32_t kInvalidNode = UINT32_MAX;
+constexpr size_t kMaxArenaNodes = 2'000'000;  // per traced run
+constexpr size_t kMaxDepth = 256;  // recursion cap -> opaque
+
+struct EvalFrame {
+  uint32_t node;
+  bool expanded;
+};
+
+struct EvalScratch {
+  std::unordered_map<uint32_t, uint64_t> values;
+  std::vector<EvalFrame> stack;
+
+  void Reset() {
+    values.clear();
+    stack.clear();
+  }
+};
 }  // namespace
 
-RunConverter::RunConverter(const dfsan_label_info *table, size_t table_labels)
-    : table_(table), table_labels_(table_labels),
-      arena_(std::make_shared<PredArena>()) {
-  arena_->nodes.reserve(4096);
-}
+RunConverter::RunConverter(const dfsan_label_info *table, size_t table_labels,
+                           PredArena *arena)
+    : table_(table), table_labels_(table_labels), arena_(arena),
+      run_start_(arena->nodes.size()) {}
 
 uint32_t RunConverter::add(PKind kind, uint16_t bits, uint32_t a, uint32_t b,
-                           uint64_t value, uint32_t aux) {
-  if (arena_->nodes.size() >= kMaxArenaNodes) {
-    overflow_ = true;
-    return 0;
+                           uint64_t value) {
+  if (bits == 0 || bits > 64 ||
+      arena_->nodes.size() - run_start_ >= kMaxArenaNodes ||
+      arena_->nodes.size() >= kInvalidNode) {
+    return kInvalidNode;
   }
-  arena_->nodes.push_back({kind, bits, a, b, value, aux});
+  arena_->nodes.push_back({value, a, b, (uint8_t)bits, kind});
   return (uint32_t)arena_->nodes.size() - 1;
 }
 
 uint32_t RunConverter::add_const(uint64_t value, uint16_t bits) {
-  if (bits == 0 || bits > 64) { overflow_ = true; return 0; }
   return add(PKind::Const, bits, kNoChild, kNoChild, value);
 }
 
@@ -1226,36 +1262,46 @@ uint32_t RunConverter::conv_child(uint32_t label, uint64_t cval,
 }
 
 uint32_t RunConverter::convert(uint32_t label, size_t depth) {
-  if (overflow_ || depth > kMaxDepth || label >= table_labels_ ||
+  if (depth > kMaxDepth || label >= table_labels_ ||
       label == kInitializingLabel) {
-    overflow_ = true;
-    return 0;
+    return kInvalidNode;
   }
   auto it = label_map_.find(label);
   if (it != label_map_.end()) return it->second;
 
+  const size_t nodes_checkpoint = arena_->nodes.size();
+  const size_t labels_checkpoint = inserted_labels_.size();
   const dfsan_label_info *info = &table_[label];
   uint32_t op = info->op;
   uint32_t op_lo = op & 0xff;
-  uint32_t idx = 0;
+  uint32_t idx;
 
   if (op == 0) {
     // raw input byte: offset in op1, input id in op2 (multi-input unused)
-    idx = add(PKind::Read, 8, kNoChild, kNoChild, info->op1.i, 1);
+    idx = add(PKind::Read, 8, kNoChild, kNoChild, info->op1.i);
   } else if (op_lo == Load) {
     // uload: consecutive input bytes fused into one read
     if (info->l1 == 0 || info->l1 >= table_labels_ || info->l2 == 0 ||
         info->l2 > 8) {
-      overflow_ = true;
-      return 0;
+      idx = kInvalidNode;
+    } else {
+      idx = add(PKind::Read, (uint16_t)(info->l2 * 8), kNoChild, kNoChild,
+                table_[info->l1].op1.i);
     }
-    idx = add(PKind::Read, (uint16_t)(info->l2 * 8), kNoChild, kNoChild,
-              table_[info->l1].op1.i, info->l2);
   } else {
     idx = convert_op(info, op, op_lo, depth);
   }
 
-  if (!overflow_) label_map_.emplace(label, idx);
+  if (idx == kInvalidNode) {
+    arena_->nodes.resize(nodes_checkpoint);
+    while (inserted_labels_.size() > labels_checkpoint) {
+      label_map_.erase(inserted_labels_.back());
+      inserted_labels_.pop_back();
+    }
+    return kInvalidNode;
+  }
+  label_map_.emplace(label, idx);
+  inserted_labels_.push_back(label);
   return idx;
 }
 
@@ -1264,10 +1310,7 @@ uint32_t RunConverter::convert_op(const dfsan_label_info *info, uint32_t op,
   uint16_t size = info->size;
   // The local evaluator intentionally supports one machine word. Wider
   // bit-vectors must be conservatively admitted instead of being truncated.
-  if (size == 0 || size > 64) {
-    overflow_ = true;
-    return 0;
-  }
+  if (size == 0 || size > 64) return kInvalidNode;
   PKind kind;
   bool unary = false, binary = false;
 
@@ -1295,22 +1338,24 @@ uint32_t RunConverter::convert_op(const dfsan_label_info *info, uint32_t op,
   if (op == __dfsan::Extract || op_lo == Trunc) {
     uint64_t off = (op == __dfsan::Extract) ? info->op2.i : 0;
     uint32_t a = conv_child(info->l1, info->op1.i, 64, depth);
-    return add(PKind::Extract, size, a, kNoChild, off);
+    return a == kInvalidNode ? kInvalidNode
+                             : add(PKind::Extract, size, a, kNoChild, off);
   }
   if (op == __dfsan::Concat) {
-    if (info->l1 == 0 && info->l2 == 0) { overflow_ = true; return 0; }
+    if (info->l1 == 0 && info->l2 == 0) return kInvalidNode;
     uint16_t cbits1 = size, cbits2 = size;
     if (info->l1 == 0 && info->l2 != 0 && info->l2 < table_labels_) {
-      if (table_[info->l2].size > size) { overflow_ = true; return 0; }
+      if (table_[info->l2].size > size) return kInvalidNode;
       cbits1 = (uint16_t)(size - table_[info->l2].size);
     }
     if (info->l2 == 0 && info->l1 != 0 && info->l1 < table_labels_) {
-      if (table_[info->l1].size > size) { overflow_ = true; return 0; }
+      if (table_[info->l1].size > size) return kInvalidNode;
       cbits2 = (uint16_t)(size - table_[info->l1].size);
     }
     uint32_t a = conv_child(info->l1, info->op1.i, cbits1, depth);
     uint32_t b = conv_child(info->l2, info->op2.i, cbits2, depth);
-    return add(PKind::Concat, size, a, b);
+    return a == kInvalidNode || b == kInvalidNode
+               ? kInvalidNode : add(PKind::Concat, size, a, b);
   }
   if (op_lo == ICmp) {
     uint32_t p = op >> 8;
@@ -1325,57 +1370,57 @@ uint32_t RunConverter::convert_op(const dfsan_label_info *info, uint32_t op,
       case bvsge: kind = PKind::Sge; break;
       case bvslt: kind = PKind::Slt; break;
       case bvsle: kind = PKind::Sle; break;
-      default: overflow_ = true; return 0;
+      default: return kInvalidNode;
     }
     uint32_t a = conv_child(info->l1, info->op1.i, size, depth);
     uint32_t b = conv_child(info->l2, info->op2.i, size, depth);
-    return add(kind, size, a, b);
+    return a == kInvalidNode || b == kInvalidNode
+               ? kInvalidNode : add(kind, size, a, b);
   }
   if (unary) {
     uint32_t a = conv_child(info->l1, info->op1.i, size, depth);
-    return add(kind, size, a, kNoChild);
+    return a == kInvalidNode ? kInvalidNode : add(kind, size, a, kNoChild);
   }
   if (binary) {
     uint32_t a = conv_child(info->l1, info->op1.i, size, depth);
     uint32_t b = conv_child(info->l2, info->op2.i, size, depth);
-    return add(kind, size, a, b);
+    return a == kInvalidNode || b == kInvalidNode
+               ? kInvalidNode : add(kind, size, a, b);
   }
 
   // FP ops, string ops, Arg/Free, fmemcmp, GEP artifacts, ... : unsupported
-  overflow_ = true;
-  return 0;
+  return kInvalidNode;
 }
 
 Predicate RunConverter::conv(uint32_t label) {
   Predicate pred;
-  pred.arena = arena_;
   if (label == 0 || label >= table_labels_) {
     pred.opaque = true;
     return pred;
   }
-  pred.root = convert(label, 0);
-  pred.opaque = overflow_;
 
-  // compute the input-read set (DFS over the subtree; no per-predicate
-  // order vector is stored — evaluation walks the arena prefix [0, root],
-  // which is valid post-order by label topology and costs the same)
-  if (!pred.opaque) {
-    std::unordered_set<uint32_t> seen;
-    std::vector<uint32_t> stack = {pred.root};
-    while (!stack.empty()) {
-      uint32_t i = stack.back();
-      stack.pop_back();
-      if (!seen.insert(i).second) continue;
-      const PNode &nd = arena_->nodes[i];
-      if (nd.kind == PKind::Read)
-        pred.reads.emplace_back((uint32_t)nd.value, nd.aux);
-      if (nd.a != kNoChild) stack.push_back(nd.a);
-      if (nd.b != kNoChild) stack.push_back(nd.b);
-    }
-    std::sort(pred.reads.begin(), pred.reads.end());
-    pred.reads.erase(std::unique(pred.reads.begin(), pred.reads.end()),
-                     pred.reads.end());
+  pred.root = convert(label, 0);
+  if (pred.root == kInvalidNode) {
+    pred.root = 0;
+    pred.opaque = true;
+    return pred;
   }
+
+  std::unordered_set<uint32_t> seen;
+  std::vector<uint32_t> stack = {pred.root};
+  while (!stack.empty()) {
+    uint32_t i = stack.back();
+    stack.pop_back();
+    if (!seen.insert(i).second) continue;
+    const PNode &nd = arena_->nodes[i];
+    if (nd.kind == PKind::Read)
+      pred.reads.emplace_back((uint32_t)nd.value, nd.bits / 8);
+    if (nd.a != kNoChild) stack.push_back(nd.a);
+    if (nd.b != kNoChild) stack.push_back(nd.b);
+  }
+  std::sort(pred.reads.begin(), pred.reads.end());
+  pred.reads.erase(std::unique(pred.reads.begin(), pred.reads.end()),
+                   pred.reads.end());
   return pred;
 }
 
@@ -1390,30 +1435,48 @@ inline int64_t sext_bits(uint64_t v, uint16_t bits) {
 }
 }  // namespace
 
-bool eval_predicate(const Predicate &pred, const uint8_t *input, uint32_t len,
-                    uint64_t *out) {
-  if (pred.opaque || !pred.arena) return false;
-  const auto &nodes = pred.arena->nodes;
-  if (pred.root >= nodes.size()) return false;
+bool eval_predicate(const PredArena &arena, const Predicate &pred,
+                    const uint8_t *input, uint32_t len, uint64_t *out) {
+  if (pred.opaque || pred.root >= arena.nodes.size()) return false;
+  const auto &nodes = arena.nodes;
+  static thread_local EvalScratch scratch;
+  scratch.Reset();
+  scratch.stack.push_back({pred.root, false});
 
-  static thread_local std::vector<uint64_t> vals;
-  if (vals.size() < nodes.size()) vals.resize(nodes.size());
+  while (!scratch.stack.empty()) {
+    EvalFrame frame = scratch.stack.back();
+    scratch.stack.pop_back();
+    if (scratch.values.find(frame.node) != scratch.values.end()) continue;
+    if (frame.node >= nodes.size()) return false;
+    const PNode &nd = nodes[frame.node];
+    if (!frame.expanded) {
+      scratch.stack.push_back({frame.node, true});
+      if (nd.b != kNoChild) scratch.stack.push_back({nd.b, false});
+      if (nd.a != kNoChild) scratch.stack.push_back({nd.a, false});
+      continue;
+    }
 
-  // arena prefix [0, root] is a valid post-order for the subtree
-  // (labels are topologically allocated: children always have smaller
-  // arena indices than their parents)
-  for (uint32_t i = 0; i <= pred.root; i++) {
-    const PNode &nd = nodes[i];
-    uint64_t a = nd.a != kNoChild ? vals[nd.a] : 0;
-    uint64_t b = nd.b != kNoChild ? vals[nd.b] : 0;
+    uint64_t a = 0, b = 0;
+    if (nd.a != kNoChild) {
+      auto it = scratch.values.find(nd.a);
+      if (it == scratch.values.end()) return false;
+      a = it->second;
+    }
+    if (nd.b != kNoChild) {
+      auto it = scratch.values.find(nd.b);
+      if (it == scratch.values.end()) return false;
+      b = it->second;
+    }
     uint16_t bits = nd.bits;
     uint64_t v;
     switch (nd.kind) {
       case PKind::Opaque: return false;
       case PKind::Read: {
-        if (nd.aux == 0 || nd.aux > 8 || nd.value + nd.aux > len) return false;
+        uint32_t nbytes = nd.bits / 8;
+        if (nd.bits == 0 || nd.bits % 8 != 0 || nbytes > 8 ||
+            nd.value + nbytes > len) return false;
         v = 0;
-        for (uint32_t k = 0; k < nd.aux; k++)
+        for (uint32_t k = 0; k < nbytes; k++)
           v |= (uint64_t)input[nd.value + k] << (8 * k);
         break;
       }
@@ -1429,8 +1492,6 @@ bool eval_predicate(const Predicate &pred, const uint8_t *input, uint32_t len,
         if (sb == 0) {
           v = mask_bits(sa < 0 ? 1 : (uint64_t)-1, bits);
         } else if (sb == -1) {
-          // Unsigned subtraction preserves the SMT bit-vector result even
-          // for INT_MIN / -1, where signed negation would be undefined.
           v = mask_bits(0 - a, bits);
         } else {
           v = mask_bits((uint64_t)(sa / sb), bits);
@@ -1456,24 +1517,17 @@ bool eval_predicate(const Predicate &pred, const uint8_t *input, uint32_t len,
       case PKind::Xor: v = mask_bits(a ^ b, bits); break;
       case PKind::Shl: v = (b >= bits) ? 0 : mask_bits(a << b, bits); break;
       case PKind::LShr: v = (b >= bits) ? 0 : (mask_bits(a, bits) >> b); break;
-      case PKind::AShr: {
-        if (b >= bits) {
-          v = (sext_bits(a, bits) < 0) ? mask_bits(~0ull, bits) : 0;
-        } else {
-          v = mask_bits((uint64_t)(sext_bits(a, bits) >> b), bits);
-        }
+      case PKind::AShr:
+        v = b >= bits ? (sext_bits(a, bits) < 0 ? mask_bits(~0ull, bits) : 0)
+                      : mask_bits((uint64_t)(sext_bits(a, bits) >> b), bits);
         break;
-      }
       case PKind::ZExt: v = mask_bits(a, bits); break;
-      case PKind::SExt: {
-        uint16_t from = nodes[nd.a].bits;
-        v = mask_bits((uint64_t)sext_bits(a, from), bits);
+      case PKind::SExt:
+        v = mask_bits((uint64_t)sext_bits(a, nodes[nd.a].bits), bits);
         break;
-      }
-      case PKind::Extract: {
-        v = (nd.value >= 64) ? 0 : mask_bits(a >> nd.value, bits);
+      case PKind::Extract:
+        v = nd.value >= 64 ? 0 : mask_bits(a >> nd.value, bits);
         break;
-      }
       case PKind::Concat: {
         uint16_t lo_bits = nodes[nd.b].bits;
         if (lo_bits >= 64) return false;
@@ -1492,15 +1546,16 @@ bool eval_predicate(const Predicate &pred, const uint8_t *input, uint32_t len,
       case PKind::Sge: v = (sext_bits(a, bits) >= sext_bits(b, bits)); break;
       default: return false;
     }
-    vals[i] = v;
+    scratch.values.emplace(frame.node, v);
   }
-  *out = vals[pred.root];
+  *out = scratch.values.find(pred.root)->second;
   return true;
 }
 
 }  // namespace pcbt
 ```
 
+sed: -e expression #1, char 6: missing command
 ## 5. Complete runtime condition-event writer
 
 The runtime receives the control block configured by the mutator. The writer
@@ -1949,9 +2004,9 @@ static void switch_pcbt_to_concrete(afl_state_t *afl) {
 
 ## Verification and non-implementation boundaries
 
-This digest rewrite creates **no** runtime or experiment evidence. The latest
-recorded PASS evidence remains in [status.md](status.md): direct and AFL trace
-checks, long pipe drain, three transport modes, and the 30-second PCBT smoke.
+This excerpt refresh adds no new evidence beyond the PCBT-structure matrix
+recorded in [status.md](status.md): the SymSan build, direct/AFL trace checks,
+long pipe drain, three transport modes, and the PCBT-to-concrete smoke.
 Use [evaluation.md](evaluation.md) for experiment design and required focused
 regressions.
 
@@ -1965,9 +2020,8 @@ implementation excerpts:
   recorded implementation paths do not increment them.
 - Jigsaw is retained under symsan/solvers/jigsaw/ but is not part of the PCBT
   hot path; the included pred.cpp interpreter is the active evaluator.
-- Shared-converter opacity, arena-prefix evaluation, short-input direction
-  selection, and the caller-owned suffix precondition remain engineering gaps
-  with the evidence labels recorded in [status.md](status.md).
+- Short-input direction selection and the caller-owned suffix precondition
+  remain engineering gaps with the evidence labels recorded in [status.md](status.md).
 
 ## Regeneration rule
 

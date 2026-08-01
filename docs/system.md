@@ -161,21 +161,22 @@ PCBT is a binary trie over symbolic branch outcomes. A node stores:
 cid
 predicate
 child[2]
-terminal[2]
 rCnt[2]
-id
 depth
 ```
 
-The virtual root has no predicate. `root.child[0]` is the sole entry slot for
-the first symbolic condition, so compatible first conditions require a
-deterministic target.
+Nodes live in one Tree-owned, index-addressed arena. `child[d]` is a 32-bit
+node reference: `0` means unexplored and the reserved reference `1` is the
+single global Terminal node. The virtual root has no predicate and
+`root.child[0]` is the sole entry slot for the first symbolic condition, so
+compatible first conditions require a deterministic target. `rCnt[d]` is an
+8-bit saturating retry count; its configured limit is therefore `0..255`.
 
 | Edge state | Representation | Screening meaning |
 |---|---|---|
-| Unexplored | `child[d] == nullptr && !terminal[d]` | frontier |
-| Next node | `child[d] != nullptr` | continue walking |
-| Terminal | `child[d] == nullptr && terminal[d]` | explored; veto |
+| Unexplored | `child[d] == 0` | frontier |
+| Next node | `child[d] > 1` | continue walking |
+| Terminal | `child[d] == 1` | explored; veto |
 
 An empty suffix changes an unexplored edge to Terminal.
 
@@ -183,15 +184,15 @@ An empty suffix changes an unexplored edge to Terminal.
 
 `InsertTrace` walks an existing prefix by `(cid, result)` until a missing edge.
 A mismatched `cid` or attempt to extend a terminal edge is a conflict and stops
-insertion. The remaining events become new nodes through one `RunConverter` and
-one shared predicate arena for that trace. This is the only insertion path that
-checks prefix `cid` consistency.
+insertion. The remaining events become new nodes through one `RunConverter`
+whose per-run label memo writes into the Tree-owned shared predicate arena.
+This is the only insertion path that checks prefix `cid` consistency.
 
 `InsertSuffix(parent, direction, events, ...)` attaches after a previously
 saved frontier without replaying the prefix. It is valid only if the caller has
 proved that:
 
-1. `parent` belongs to the current tree;
+1. `parent` is a current tree node reference;
 2. `direction` is 0 or 1;
 3. `parent->child[direction]` is unexplored;
 4. the saved candidate reached that exact frontier in the execution that
@@ -205,14 +206,16 @@ attempts before this API is called.
 
 ### Candidate screening, retry counts, and saturation
 
-`CheckInput` evaluates predicates from the first node and takes one of four
+`CheckInput` evaluates predicates from the first node and takes one of five
 outcomes:
 
-1. opaque or missing predicate arena: admit conservatively without a frontier,
+1. opaque predicate: admit conservatively without a frontier,
    so the mutator arms a full trace;
-2. known child: continue walking;
-3. terminal edge: veto; or
-4. unexplored edge: admit while `rCnt[d] < rlimit` and return its parent and
+2. failed concrete evaluation (for example, a read past the candidate end):
+   admit conservatively without choosing a direction;
+3. known child: continue walking;
+4. terminal edge: veto; or
+5. unexplored edge: admit while `rCnt[d] < rlimit` and return its parent and
    direction as the frontier.
 
 `rCnt[d]` counts admitted attempts at a frontier direction that did not create a
@@ -223,18 +226,19 @@ The tree is saturated only when each evaluable direction is backed by a
 saturated subtree, terminal, or an unexplored frontier whose retry count reached
 the limit. An opaque predicate prevents precise saturation through its node.
 
-If predicate evaluation fails because a candidate read exceeds its length, the
-current implementation selects direction `0`, rather than performing an opaque
-admission. This is a current code property requiring directed regression
-coverage, not an intended semantic guarantee.
+If predicate evaluation fails because a candidate read exceeds its length, it
+is an explicit conservative admission. It never selects an invented direction
+and therefore cannot cause a veto.
 
 ## Predicate model and semantic boundary
 
-A `RunConverter` converts SymSan union-table labels into a shared post-order
-arena. Each PCBT node carries a lightweight `Predicate` view consisting of a
-shared arena, root index, opacity flag, and input-read ranges.
+A Tree owns one append-only post-order `PredArena`; a `RunConverter` maps the
+current run's union-table labels into it. Each PCBT node carries a lightweight
+`Predicate` view consisting of a root index, opacity flag, and input-read
+ranges. Failed conversion of one root rolls back that root's partial arena
+append and does not make later roots in the same trace opaque.
 
-The interpreter supports integer bit-vectors up to 64 bits:
+The admitted scalar grammar supports integer bit-vectors up to 64 bits:
 
 - reads and constants;
 - add/sub/mul, signed and unsigned div/rem;
@@ -242,19 +246,26 @@ The interpreter supports integer bit-vectors up to 64 bits:
 - integer comparisons; and
 - zero/sign extension, extraction, and concatenation.
 
-Unsupported, too-wide, too-deep, or oversized conversions become opaque. The
+It also supports a direct `fmemcmp` result compared with zero when the DFSan
+label records at most eight bytes. Its canonical `-1/0/+1` byte-lexicographic
+result preserves the C sign contract for that use. Wider `fmemcmp`, indirect
+uses of its sign-only result, floating point, and string-theory labels remain
+outside this grammar and must be conservatively admitted or rejected by target
+preflight; they are never assigned an invented value.
+
+Unsupported, malformed, too-wide, or resource-bounded conversions become
+opaque. Conversion is iterative, so expression nesting has no call-stack depth
+limit; a failed root rolls back only its own append and cannot poison later
+roots in the same trace. The
 interpreter uses fixed-width masking, SMT-style divide-by-zero behavior, and
 shift-by-width semantics. Reads are little-endian and at most eight bytes. It
 must never silently truncate or invent semantics for unsupported expressions.
 
-Two current implementation details are not architectural guarantees and require
-regression coverage:
-
-1. `RunConverter::overflow_` is shared across predicates converted in one run;
-   an unsupported subtree can make later predicates opaque.
-2. `eval_predicate` evaluates arena indices `0..root`, not only the root's
-   reachable dependency subgraph. In the shared arena, an earlier unrelated
-   read can affect a later predicate.
+`eval_predicate` starts at the requested root and executes only its reachable
+DAG with an iterative post-order work stack and sparse value scratch. One
+`CheckInput` shares that scratch across all roots visited for its candidate, so
+common PNodes from a captured trace are evaluated once. Unrelated earlier arena
+nodes are neither evaluated nor allowed to affect the predicate result.
 
 ## System invariants
 
